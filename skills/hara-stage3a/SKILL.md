@@ -14,7 +14,7 @@ description: Stage 3A 场景与危害事件生成。用于为一个或多个 Sta
 - 输入：
   - `output/<RUN_ID>_stage3_context_<MF_ID>.json`
 - 输出：每个 MF 一个 `output/<RUN_ID>_stage3a_<MF_ID>_scenarios.json`。
-- 必读契约：`references/json-contracts.md`、`references/stage3a-scenario-generation.md`。
+- 必读契约：`references/json-contracts.md`、`references/stage3a-scenario-generation.md`、`references/vehicle-dynamics-rules.md`。
 
 ## 上下文加载
 

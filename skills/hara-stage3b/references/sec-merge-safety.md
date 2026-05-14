@@ -12,7 +12,8 @@
 - S/E/C 子任务输出数组
 - 本文件
 - `knowledge-base/automotive/hara/common/04-risk_assessment-asil.md`
-- 必要时定向读取 `knowledge-base/automotive/hara/common/05-safety_goal.md`
+- `knowledge-base/automotive/hara/common/05-safety_goal.md`
+- `knowledge-base/automotive/hara/common/06-ftti.md`
 
 不要在总控阶段重新阅读 S/E/C 详细评级规则；评级结论来自子任务。
 
@@ -58,28 +59,19 @@ QM (S1+E3+C2=6)
 
 `safety_goal` 是当前 MF 级别的一条安全目标，基于最高可信风险路径生成，不是每条场景各写一条。
 
-写法：
-
-```text
-防止[车辆状态/原因/故障内容]导致[整车危害]
-```
-
-选择依据：
-
-- 优先选择最高 ASIL 场景。
-- 如果多个场景同级，选择更能代表该 MF 本质危险的场景。
-- 如果所有场景为 QM，仍可给出简短安全目标，但不要强行拔高到 ASIL 安全目标语气。
+根据 `05-safety_goal.md` 知识库生成。
 
 ## 安全状态
 
-`safe_state` 应描述能满足安全目标的车辆状态，例如：
+`safe_state` 应描述能满足安全目标的车辆状态。
 
-- 车辆保持静止
-- 维持驾驶员请求的制动/转向响应
-- 限制非预期加速或减速
-- 提供可诊断降级并保持驾驶员可控
+根据 `05-safety_goal.md` 知识库生成，与 `safety_goal` 对应。
 
-安全状态应和 `safety_goal` 对应，不要写成泛泛的“系统安全运行”。
+## FTTI
+
+根据 `06-ftti.md` 知识库生成。
+
+**注意**：当某场景的 `结果ASIL` 为 QM 时，该场景的 `FTTI(ms)` 字段应置为空。
 
 ## 输出对象
 

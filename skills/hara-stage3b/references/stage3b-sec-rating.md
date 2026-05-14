@@ -16,8 +16,10 @@
 - E 权威知识库：`knowledge-base/automotive/hara/common/04-risk_assessment-e.md`
 - C 子任务提示词：`references/sec-c-batch-prompt.md`
 - C 权威知识库：`knowledge-base/automotive/hara/common/04-risk_assessment-c.md`
-- 合并、ASIL、安全目标：`references/sec-merge-safety.md`
+- 合并、ASIL：`references/sec-merge-safety.md`
 - ASIL 权威知识库：`knowledge-base/automotive/hara/common/04-risk_assessment-asil.md`
+- 安全目标知识库：`knowledge-base/automotive/hara/common/05-safety_goal.md`
+- FTTI 知识库：`knowledge-base/automotive/hara/common/06-ftti.md`
 
 ## 总控上下文
 
@@ -29,9 +31,11 @@ Stage3B 总控 agent 的活跃上下文只保留：
 - `sec-batch-prompt.md`
 - `sec-merge-safety.md`
 - `04-risk_assessment-asil.md`
+- `05-safety_goal.md`
+- `06-ftti.md`
 - 已完成批次的合成后 `sec_records` 摘要
 
-总控 agent 不读取 `04-risk_assessment.md` 索引或 S/E/C 知识库，除非是在定位某个子任务输出错误。
+总控 agent 不读取 S/E/C 知识库，除非是在定位某个子任务输出错误。
 
 ## 子任务上下文
 

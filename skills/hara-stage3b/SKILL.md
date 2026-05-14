@@ -106,7 +106,7 @@ Agent(
 # === Step 4: 启动 FTTI 子 agent ===
 Agent(
   subagent_type="claude",
-  prompt="执行 FTTI 计算任务。输入场景：output/<RUN_ID>_stage3a_<MF_ID>_scenarios.json。读取 knowledge-base/automotive/hara/common/05-safety_goal.md 中的 FTTI 判断规则。对每个场景计算 FTTI。输出文件：output/<RUN_ID>_stage3b_<MF_ID>_ftti.json（JSON 数组，每项：List_No、FTTI(ms)、FTTI理由）。只返回文件路径。"
+  prompt="执行 FTTI 计算任务。输入场景：output/<RUN_ID>_stage3a_<MF_ID>_scenarios.json。读取 knowledge-base/automotive/hara/common/06-ftti.md。对每个场景计算 FTTI。输出文件：output/<RUN_ID>_stage3b_<MF_ID>_ftti.json（JSON 数组，每项：List_No、FTTI(ms)、FTTI理由）。只返回文件路径。"
 )
 
 # === Step 5: 统一拼接所有文件 ===
