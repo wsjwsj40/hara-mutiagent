@@ -62,21 +62,148 @@ S/E/C 子任务只加载自己的批次提示词和自己的知识库：
 - `结果ASIL` 由 `sec-merge-safety.md` 的后缀求和规则计算；不要为了得到更高 ASIL 而夸大 S/E/C。
 - 为该 MF 生成一个 `safety_goal` 和一个 `safe_state`，基于可信最高风险路径。
 
-## 执行流程
+## 子 Agent 调用指示
 
-1. 读取 Stage3 context 和 Stage3A，确认场景数量为 10-20。
-2. 生成批次上下文，每批最多 5 条场景：
+**重要：Stage3B 总控必须使用 Agent 工具为每个批次和每个 SEC 维度启动独立子 agent。**
+
+### 执行流程
 
 ```text
-python tools/hara/prepare_stage3_context.py sec-batches --context output/<RUN_ID>_stage3_context_<MF_ID>.json --stage3a output/<RUN_ID>_stage3a_<MF_ID>_scenarios.json --out-dir output --batch-size 5
+# === Step 1: 准备批次上下文 ===
+bash: python tools/hara/prepare_stage3_context.py sec-batches \
+  --context output/<RUN_ID>_stage3_context_<MF_ID>.json \
+  --stage3a output/<RUN_ID>_stage3a_<MF_ID>_scenarios.json \
+  --out-dir output --batch-size 5
+
+# === Step 2: 对每个批次，并行启动 S/E/C 三个独立子 agent ===
+# 假设生成了 batch01, batch02 两个批次
+
+# Batch 01: 并行启动 S/E/C 三个子任务
+Agent(
+  subagent_type="claude",
+  prompt="执行 Stage3B-S 评级任务。批次上下文：output/<RUN_ID>_stage3b_<MF_ID>_batch01_context.json。读取 references/sec-s-batch-prompt.md 和 knowledge-base/automotive/hara/common/04-risk_assessment-s.md。输出文件：output/<RUN_ID>_stage3b_<MF_ID>_batch01_s.json（JSON 数组，UTF-8 无 BOM）。每项必须包含：List_No、有风险的人员、可能的后果('S'的理由)、Severity 'S'、S评级推理。只返回文件路径。"
+)
+Agent(
+  subagent_type="claude",
+  prompt="执行 Stage3B-E 评级任务。批次上下文：output/<RUN_ID>_stage3b_<MF_ID>_batch01_context.json。读取 references/sec-e-batch-prompt.md 和 knowledge-base/automotive/hara/common/04-risk_assessment-e.md。输出文件：output/<RUN_ID>_stage3b_<MF_ID>_batch01_e.json（JSON 数组，UTF-8 无 BOM）。每项必须包含：List_No、E-解释、暴露频率'E'、E评级推理。只返回文件路径。"
+)
+Agent(
+  subagent_type="claude",
+  prompt="执行 Stage3B-C 评级任务。批次上下文：output/<RUN_ID>_stage3b_<MF_ID>_batch01_context.json。读取 references/sec-c-batch-prompt.md 和 knowledge-base/automotive/hara/common/04-risk_assessment-c.md。输出文件：output/<RUN_ID>_stage3b_<MF_ID>_batch01_c.json（JSON 数组，UTF-8 无 BOM）。每项必须包含：List_No、C-解释、控制能力 'C'、C评级推理。只返回文件路径。"
+)
+
+# Batch 02: 同样并行启动 S/E/C 三个子任务
+Agent(...) # S 评级 batch02 → output/<RUN_ID>_stage3b_<MF_ID>_batch02_s.json
+Agent(...) # E 评级 batch02 → output/<RUN_ID>_stage3b_<MF_ID>_batch02_e.json
+Agent(...) # C 评级 batch02 → output/<RUN_ID>_stage3b_<MF_ID>_batch02_c.json
+
+# === Step 3: 启动 Safety 子 agent ===
+Agent(
+  subagent_type="claude",
+  prompt="执行 Safety 生成任务。输入：output/<RUN_ID>_stage3_context_<MF_ID>.json。读取 knowledge-base/automotive/hara/common/05-safety_goal.md。生成 safety_goal 和 safe_state。输出文件：output/<RUN_ID>_stage3b_<MF_ID>_safety.json。格式：{safety_goal: \"...\", safe_state: \"...\"}。只返回文件路径。"
+)
+
+# === Step 4: 启动 FTTI 子 agent ===
+Agent(
+  subagent_type="claude",
+  prompt="执行 FTTI 计算任务。输入场景：output/<RUN_ID>_stage3a_<MF_ID>_scenarios.json。读取 knowledge-base/automotive/hara/common/05-safety_goal.md 中的 FTTI 判断规则。对每个场景计算 FTTI。输出文件：output/<RUN_ID>_stage3b_<MF_ID>_ftti.json（JSON 数组，每项：List_No、FTTI(ms)、FTTI理由）。只返回文件路径。"
+)
+
+# === Step 5: 统一拼接所有文件 ===
+bash: python tools/hara/merge_sec_batches.py \
+  --s-batches output/<RUN_ID>_stage3b_<MF_ID>_batch*_s.json \
+  --e-batches output/<RUN_ID>_stage3b_<MF_ID>_batch*_e.json \
+  --c-batches output/<RUN_ID>_stage3b_<MF_ID>_batch*_c.json \
+  --safety output/<RUN_ID>_stage3b_<MF_ID>_safety.json \
+  --ftti output/<RUN_ID>_stage3b_<MF_ID>_ftti.json \
+  --output output/<RUN_ID>_stage3b_<MF_ID>_sec.json \
+  --meta-mf-id <MF_ID> --meta-run-id <RUN_ID> \
+  --cleanup
+
+# === Step 6: 验证与合并 ===
+bash: python tools/hara/check_stage_json.py --stage stage3b_raw --json output/<RUN_ID>_stage3b_<MF_ID>_sec.json
+bash: python tools/hara/merge_stage3.py --stage3a output/<RUN_ID>_stage3a_<MF_ID>_scenarios.json --stage3b output/<RUN_ID>_stage3b_<MF_ID>_sec.json --output output/<RUN_ID>_stage3_<MF_ID>_hara.json
 ```
 
-3. 对每个批次分别启动 S/E/C 三个独立子任务。
-4. 每批完成后立即按 `List_No` 合并三类 JSON 数组，计算 `结果ASIL`，形成本批 `sec_records`。
-5. 不要把批次子任务的完整推理草稿保留在总控上下文；只保留合成后的结构化结果。
-6. 所有批次完成后，基于该 MF 的最高可信风险路径补充 `safety_goal` 和 `safe_state`。
-7. 只写 UTF-8 JSON，不输出 Markdown 包裹。
-8. 使用 `stage3b_raw` 验证，再与 Stage 3A 合并并验证完整 Stage 3。
+### SEC 子任务输入输出规范
+
+**重要：每个子任务必须将结果写入独立文件，返回文件路径，不在上下文中返回 JSON 数组。**
+
+**S 子任务：**
+- 输入：批次上下文 JSON + `sec-s-batch-prompt.md` + `04-risk_assessment-s.md`
+- 输出文件：`output/<RUN_ID>_stage3b_<MF_ID>_<BATCH>_s.json`
+- 文件内容：JSON 数组（UTF-8 编码，无 BOM）
+- 每项包含：`List_No`、`有风险的人员`、`可能的后果('S'的理由)`、`Severity 'S'`、`S评级推理`
+- **`有风险的人员`**：列出本场景中所有可能受影响的人员类别（如：驾驶员、乘客、行人、其他道路使用者等）
+- **`可能的后果('S'的理由)` 格式要求**：
+  1. **分别分析**：对 `有风险的人员` 中的每一类，分别说明其可能受到的伤害及其 S 等级判定
+  2. **取最高等级**：基于上述分析，最终 `Severity 'S'` 取所有人员中的最高 S 等级
+  3. **每个人员的分析格式**：
+     - 人员类别 + 伤害描述 + S 等级定义解释 + 场景结合说明
+  4. **最终结论**：明确说明"综合所有风险人员，最高 S 等级为 Sx"
+- **`S评级推理` 格式**：对象包含 `S等级`、`S等级定义`、`本场景伤害分析`
+
+**E 子任务：**
+- 输入：批次上下文 JSON + `sec-e-batch-prompt.md` + `04-risk_assessment-e.md`
+- 输出文件：`output/<RUN_ID>_stage3b_<MF_ID>_<BATCH>_e.json`
+- 文件内容：JSON 数组（UTF-8 编码，无 BOM）
+- 每项包含：`List_No`、`E-解释`、`暴露频率'E'`、`E评级推理`
+- **`E-解释` 格式要求**：
+  1. **定义解释**：引用 E0/E1/E2/E3/E4 的定义，说明所选等级的判定依据
+  2. **场景结合**：结合本场景的暴露频率（道路类型、驾驶场景、工况条件），说明为何在该场景下适用此等级
+- **`E评级推理` 格式**：对象包含 `E等级`、`E等级定义`、`本场景暴露分析`
+
+**C 子任务：**
+- 输入：批次上下文 JSON + `sec-c-batch-prompt.md` + `04-risk_assessment-c.md`
+- 输出文件：`output/<RUN_ID>_stage3b_<MF_ID>_<BATCH>_c.json`
+- 文件内容：JSON 数组（UTF-8 编码，无 BOM）
+- 每项包含：`List_No`、`C-解释`、`控制能力 'C'`、`C评级推理`
+- **`C-解释` 格式要求**：
+  1. **定义解释**：引用 C0/C1/C2/C3 的定义，说明所选等级的判定依据
+  2. **场景结合**：结合本场景的可控性因素（驾驶员状态、警告时间、操作空间等），说明为何在该场景下适用此等级
+- **`C评级推理` 格式**：对象包含 `C等级`、`C等级定义`、`本场景可控性分析`
+
+### 输出文件示例
+
+**`batch01_s.json` 示例：**
+```json
+[
+  {
+    "List_No": 1,
+    "有风险的人员": "驾驶员、乘客、后方车辆乘客",
+    "可能的后果('S'的理由)": "1. 驾驶员：车辆高速碰撞可能导致胸部损伤和骨折，符合 S2 定义（可能造成严重伤害，需医疗处理但无生命危险）。2. 乘客：后排乘客未系安全带，撞击时可能造成头部重伤，符合 S3 定义（可能造成致命伤害）。3. 后方车辆乘客：追尾碰撞可能造成致命伤害，符合 S3 定义。综合所有风险人员，最高 S 等级为 S3。",
+    "Severity 'S'": "S3",
+    "S评级推理": {
+      "S等级": "S3",
+      "S等级定义": "可能造成致命伤害（有生命危险）",
+      "本场景伤害分析": "高速状态下制动失效，导致追尾碰撞，驾驶员和乘客可能遭受致命伤害"
+    }
+  }
+]
+```
+
+### 总控合并规则
+
+**总控 agent 不手动合并 SEC 记录，统一使用 `merge_sec_batches.py` 脚本：**
+
+1. 等待所有批次的 S/E/C 子任务全部完成，每个子任务返回文件路径
+2. 调用 `merge_sec_batches.py` 脚本：
+   - 传入所有批次文件路径
+   - 脚本自动按 `List_No` 对齐 S/E/C 记录
+   - 脚本自动计算 `结果ASIL`（S+E+C 后缀求和规则）
+   - 脚本自动组装 `sec_reasoning`
+   - `--cleanup` 参数自动删除分散的 batch 文件
+3. 基于合并后的结果，生成 `safety_goal` 和 `safe_state`
+4. 将 `safety_goal` 和 `safe_state` 添加到合并后的文件中
+
+### 重要约束
+
+- **S/E/C 子任务必须完全独立**，不共享上下文，不互相参考
+- **批次之间必须独立**，Batch 01 的 S 评级不影响 Batch 02
+- **子任务必须输出文件**，不要在响应中返回 JSON 数组，只返回文件路径
+- **总控只保留文件路径**，等待所有批次完成后用脚本合并
+- **不要在当前上下文执行 SEC 评级或手动合并**，必须启动独立子 agent + 脚本合并
+- **合并后自动删除分散文件**，保持 output 目录干净
 
 ## 验证
 

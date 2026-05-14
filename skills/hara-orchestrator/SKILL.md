@@ -60,6 +60,132 @@ description: HARA 端到端流程编排与质量门禁。用于完整 HARA 分�
 | 14 | `hara-stage4r` | Stage 3 HARA + Stage 4 JSON | `output/<RUN_ID>_stage4_review.json` | 必须通过 |
 | 15 | 合并/导出工具 | 所有阶段输出 | `output/<RUN_ID>.json`、`.xlsx` | 最终验证与导出 |
 
+## 子 Agent 调用指示
+
+**重要：每个主阶段和 Review 阶段必须使用 Agent 工具启动独立子 agent，不要在当前上下文执行。**
+
+### 标准流程调用（从源文档到最终输出）
+
+```text
+# === Step 0: 源文档提取（可选） ===
+如果输入是 Word/PDF，先启动子 agent 执行提取：
+Agent(
+  subagent_type="claude",
+  prompt="执行 python tools/hara/extract_function_doc.py --input <input_path> --out output/<RUN_ID>_source_extraction.json"
+)
+
+# === Step 1: Stage 0 功能提取 ===
+Agent(
+  subagent_type="claude",
+  prompt="执行 /hara-stage0 skill。输入：<input_text 或 output/<RUN_ID>_source_extraction.json>，输出：output/<RUN_ID>_stage0_function_mapping.json。RUN_ID=<RUN_ID>"
+)
+
+# === Step 2: Stage 0 Review（门禁） ===
+Agent(
+  subagent_type="claude",
+  prompt="执行 /hara-stage0r skill。输入：output/<RUN_ID>_stage0_function_mapping.json，输出：output/<RUN_ID>_stage0_review.json。RUN_ID=<RUN_ID>"
+)
+# 等待结果，如果 review 未通过，重新运行 Step 1
+
+# === Step 3: Stage 1 推导 MF ===
+Agent(
+  subagent_type="claude",
+  prompt="执行 /hara-stage1 skill。输入：output/<RUN_ID>_stage0_function_mapping.json，输出：output/<RUN_ID>_stage1_derive_mf.json。RUN_ID=<RUN_ID>"
+)
+
+# === Step 4: Stage 1 Review（门禁） ===
+Agent(
+  subagent_type="claude",
+  prompt="执行 /hara-stage1r skill。输入：output/<RUN_ID>_stage0_function_mapping.json + output/<RUN_ID>_stage1_derive_mf.json，输出：output/<RUN_ID>_stage1_review.json。RUN_ID=<RUN_ID>"
+)
+# 等待结果，如果 review 未通过，重新运行 Step 3
+
+# === Step 5: Stage 2 危害分析 ===
+Agent(
+  subagent_type="claude",
+  prompt="执行 /hara-stage2 skill。输入：output/<RUN_ID>_stage0_function_mapping.json + output/<RUN_ID>_stage1_derive_mf.json，输出：output/<RUN_ID>_stage2_mf_vehicle_hazards.json。RUN_ID=<RUN_ID>"
+)
+
+# === Step 6: Stage 2 Review（门禁） ===
+Agent(
+  subagent_type="claude",
+  prompt="执行 /hara-stage2r skill。输入：output/<RUN_ID>_stage1_derive_mf.json + output/<RUN_ID>_stage2_mf_vehicle_hazards.json，输出：output/<RUN_ID>_stage2_review.json。RUN_ID=<RUN_ID>"
+)
+# 等待结果，如果 review 未通过，重新运行 Step 5
+
+# === Step 7-11: Stage 3 循环（对每个 MF_ID） ===
+# 先准备 Stage 3 context
+bash: python tools/hara/prepare_stage3_context.py mf-context --stage0 output/<RUN_ID>_stage0_function_mapping.json --stage2 output/<RUN_ID>_stage2_mf_vehicle_hazards.json --all --prefix <RUN_ID> --out-dir output
+
+# 对每个 MF_ID：
+for each MF_ID:
+  # Step 8: Stage 3A 场景分析
+  Agent(
+    subagent_type="claude",
+    prompt="执行 /hara-stage3a skill。输入：output/<RUN_ID>_stage3_context_<MF_ID>.json，输出：output/<RUN_ID>_stage3a_<MF_ID>_scenarios.json。RUN_ID=<RUN_ID>, MF_ID=<MF_ID>"
+  )
+
+  # Step 9: Stage 3B SEC 分析
+  Agent(
+    subagent_type="claude",
+    prompt="执行 /hara-stage3b skill。输入：output/<RUN_ID>_stage3_context_<MF_ID>.json + output/<RUN_ID>_stage3a_<MF_ID>_scenarios.json，输出：output/<RUN_ID>_stage3b_<MF_ID>_sec.json。RUN_ID=<RUN_ID>, MF_ID=<MF_ID>"
+  )
+
+  # Step 10: 合并 Stage 3A/3B
+  bash: python tools/hara/merge_stage3.py --stage3a output/<RUN_ID>_stage3a_<MF_ID>_scenarios.json --stage3b output/<RUN_ID>_stage3b_<MF_ID>_sec.json --output output/<RUN_ID>_stage3_<MF_ID>_hara.json
+
+  # Step 11: Stage 3 Review（门禁）
+  Agent(
+    subagent_type="claude",
+    prompt="执行 /hara-stage3r skill。输入：output/<RUN_ID>_stage3_context_<MF_ID>.json + output/<RUN_ID>_stage3_<MF_ID>_hara.json，输出：output/<RUN_ID>_stage3_<MF_ID>_review.json。RUN_ID=<RUN_ID>, MF_ID=<MF_ID>"
+  )
+  # 等待结果，如果 review 未通过，重新运行 Step 8-11
+
+  # Step 12: 应用 ASIL 矩阵
+  bash: python tools/hara/apply_asil_matrix.py --input output/<RUN_ID>_stage3_<MF_ID>_hara.json --output output/<RUN_ID>_stage3_<MF_ID>_hara.json
+
+# === Step 13: Stage 4 安全目标 ===
+Agent(
+  subagent_type="claude",
+  prompt="执行 /hara-stage4 skill。输入：所有 output/<RUN_ID>_stage3_*_hara.json 文件，输出：output/<RUN_ID>_stage4_sg_sum.json。RUN_ID=<RUN_ID>"
+)
+
+# === Step 14: Stage 4 Review（门禁） ===
+Agent(
+  subagent_type="claude",
+  prompt="执行 /hara-stage4r skill。输入：output/<RUN_ID>_stage4_sg_sum.json，输出：output/<RUN_ID>_stage4_review.json。RUN_ID=<RUN_ID>"
+)
+# 等待结果，如果 review 未通过，重新运行 Step 13
+
+# === Step 15: 最终合并与导出 ===
+bash: python tools/hara/hara_stage_merge.py --stage-dir output --prefix <RUN_ID> --out output/<RUN_ID>.json
+bash: python tools/hara/run_hara_export.py --json output/<RUN_ID>.json --out output/<RUN_ID>.xlsx --mode basic
+```
+
+### 中间阶段恢复
+
+如果从某个中间阶段恢复：
+
+```text
+# 例如：从 Stage 2 重新开始
+# 直接调用对应 agent
+Agent(
+  subagent_type="claude",
+  prompt="执行 /hara-stage2 skill。输入：output/<RUN_ID>_stage0_function_mapping.json + output/<RUN_ID>_stage1_derive_mf.json，输出：output/<RUN_ID>_stage2_mf_vehicle_hazards.json。RUN_ID=<RUN_ID>"
+)
+```
+
+### 并行执行提示
+
+对于独立的 MF_ID 处理，可以并行启动多个 Stage 3 子 agent：
+
+```text
+# 在同一消息中发送多个 Agent 调用
+Agent(...) for MF_001
+Agent(...) for MF_002
+Agent(...) for MF_003
+```
+
 ## 门禁规则
 
 - Review 阶段是进入下一主阶段的必要条件。

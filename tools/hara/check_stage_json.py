@@ -46,7 +46,7 @@ SCENARIOS_COLUMNS = [
     "道路条件",
     "环境条件",
     "车辆状态",
-    "车速（km/h）",
+    "车速(km/h)",
     "特殊要素",
     "附加条件",
     "驾驶员是否在车上",
@@ -351,16 +351,19 @@ def check_stage3a_operation_scenarios(data: Any, operation_scenarios: Any | None
     检查规则：
     1. 每个字段的值必须来自其对应的场景库
     2. 值不能错误地出现在其他字段中（如"泥泞路面"属于"道路条件"，不能放在"特殊要素"中）
+
+    验证前会自动规范化字段值：去除多余空格。规范化后合格则通过。
     """
     if not isinstance(operation_scenarios, dict):
         return
 
     # 构建值到字段的反向映射，用于检测跨字段误用
+    # 同时规范化枚举值（去除多余空格）
     value_to_field: dict[str, str] = {}
     for field_name, allowed_values in operation_scenarios.items():
         if isinstance(allowed_values, list):
             for val in allowed_values:
-                val_str = str(val).strip()
+                val_str = re.sub(r"\s+", "", str(val).strip())  # 规范化枚举值
                 if val_str and val_str not in ("ALL", "不涉及"):
                     # 如果值存在于多个字段，记录所有可能
                     if val_str in value_to_field:
@@ -378,37 +381,143 @@ def check_stage3a_operation_scenarios(data: Any, operation_scenarios: Any | None
             if value in ("不涉及", "ALL", ""):
                 continue
 
+            # 规范化：去除内部多余空格
+            normalized_value = re.sub(r"\s+", "", value)
+
+            # 构建规范化的允许值集合
+            allowed_set = {re.sub(r"\s+", "", str(item).strip()) for item in allowed}
+
+            # 检查规范化后的值是否在允许列表中
+            if normalized_value in allowed_set:
+                continue  # 规范化后合格，通过
+
+            # 检查值是否属于其他字段（误用检测）
+            correct_field = value_to_field.get(normalized_value, "")
+
+            if correct_field:
+                # 值确实在场景库中，但用错了字段
+                errors.append({
+                    "stage": "stage3a",
+                    "row": index,
+                    "error": "scenario_field_mismatch",
+                    "field": field,
+                    "value": value,
+                    "message": f"值 '{value}' (规范化为 '{normalized_value}') 属于字段 [{correct_field}]，不能用在字段 [{field}] 中",
+                    "correct_field": correct_field,
+                    "allowed_source": "operation_scenarios.json",
+                })
+            else:
+                # 值根本不在场景库中
+                errors.append({
+                    "stage": "stage3a",
+                    "row": index,
+                    "error": "scenario_enum_value_not_in_library",
+                    "field": field,
+                    "value": value,
+                    "message": f"值 '{value}' (规范化为 '{normalized_value}') 不在任何场景库字段中，必须使用 operation_scenarios.json 中定义的值",
+                    "allowed_values": sorted(list(allowed_set)),
+                    "allowed_source": "operation_scenarios.json",
+                })
+
+
+import re
+
+
+def normalize_scenario_value(value: str) -> tuple[str, list[str]]:
+    """规范化场景字段值，自动修正格式问题。
+
+    返回：(修正后的值, 修正说明列表)
+
+    修正规则：
+    1. 去除首尾空格
+    2. 中文括号（）转英文括号()
+    3. 全角空格转半角空格
+    4. 去除内部多余空格
+    """
+    if not value or not isinstance(value, str):
+        return value, []
+
+    original = value
+    fixes: list[str] = []
+
+    # 1. 去除首尾空格
+    value = value.strip()
+
+    # 2. 中文括号转英文括号（operation_scenarios.json 使用英文括号）
+    if "（" in value or "）" in value:
+        value = value.replace("（", "(").replace("）", ")")
+        fixes.append("中文括号已转为英文括号")
+
+    # 3. 全角空格转半角空格
+    if "　" in value:
+        value = value.replace("　", " ")
+        fixes.append("全角空格已转为半角空格")
+
+    # 4. 去除内部多余空格（将多个连续空格合并为一个）
+    collapsed = re.sub(r"\s+", " ", value)
+    if collapsed != value:
+        value = collapsed
+        fixes.append("内部多余空格已合并")
+
+    return value, fixes
+
+
+def apply_scenario_enum_format_fixes(data: Any, operation_scenarios: Any | None) -> list[dict[str, Any]]:
+    """自动修正场景枚举字段的格式问题。
+
+    在验证枚举值之前，先尝试修正格式问题（空格、括号等）。
+    只修正简单格式问题，不改变值的语义。
+    """
+    if not isinstance(operation_scenarios, dict):
+        return []
+
+    scenarios = rows(data, "scenarios")
+    fixes: list[dict[str, Any]] = []
+
+    # 构建允许值的集合（包含规范化后的版本）
+    allowed_sets: dict[str, set[str]] = {}
+    for field in STAGE3A_ENUM_FIELDS:
+        allowed = operation_scenarios.get(field)
+        if isinstance(allowed, list):
+            # 同时存储原始值和规范化后的值
             allowed_set = {str(item).strip() for item in allowed}
+            normalized_set = set()
+            for item in allowed:
+                normalized, _ = normalize_scenario_value(str(item))
+                normalized_set.add(normalized)
+            allowed_sets[field] = allowed_set | normalized_set
 
-            # 检查值是否在当前字段的允许列表中
-            if value not in allowed_set:
-                # 检查值是否属于其他字段（误用检测）
-                correct_field = value_to_field.get(value, "")
+    for index, row in enumerate(scenarios, start=1):
+        for field in STAGE3A_ENUM_FIELDS:
+            current_value = row.get(field, "")
+            if not current_value or current_value in ("不涉及", "ALL"):
+                continue
 
-                if correct_field:
-                    # 值确实在场景库中，但用错了字段
-                    errors.append({
-                        "stage": "stage3a",
-                        "row": index,
-                        "error": "scenario_field_mismatch",
-                        "field": field,
-                        "value": value,
-                        "message": f"值 '{value}' 属于字段 [{correct_field}]，不能用在字段 [{field}] 中",
-                        "correct_field": correct_field,
-                        "allowed_source": "operation_scenarios.json",
-                    })
-                else:
-                    # 值根本不在场景库中
-                    errors.append({
-                        "stage": "stage3a",
-                        "row": index,
-                        "error": "scenario_enum_value_not_in_library",
-                        "field": field,
-                        "value": value,
-                        "message": f"值 '{value}' 不在任何场景库字段中，必须使用 operation_scenarios.json 中定义的值",
-                        "allowed_values": sorted(list(allowed_set)),
-                        "allowed_source": "operation_scenarios.json",
-                    })
+            str_value = str(current_value).strip()
+
+            # 尝试规范化
+            normalized_value, fix_reasons = normalize_scenario_value(str_value)
+
+            if normalized_value == str_value:
+                continue  # 无需修正
+
+            # 检查修正后的值是否在允许列表中
+            allowed_set = allowed_sets.get(field, set())
+            if normalized_value in allowed_set:
+                # 应用修正
+                old_value = row[field]
+                row[field] = normalized_value
+                fixes.append({
+                    "stage": "stage3a",
+                    "row": index,
+                    "field": field,
+                    "action": "format_normalized",
+                    "old_value": old_value,
+                    "new_value": normalized_value,
+                    "fixes": fix_reasons,
+                })
+
+    return fixes
 
 
 def apply_scenario_condition_corrections(data: Any, errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -418,7 +527,7 @@ def apply_scenario_condition_corrections(data: Any, errors: list[dict[str, Any]]
     """
     scenarios = rows(data, "scenarios")
     fixes: list[dict[str, Any]] = []
-    condition_fields = ["道路类型", "道路条件", "环境条件", "车辆状态", "车速（km/h）", "特殊要素"]
+    condition_fields = ["道路类型", "道路条件", "环境条件", "车辆状态", "车速(km/h)", "特殊要素"]
 
     for index, row in enumerate(scenarios, start=1):
         reasoning = row.get("scenario_reasoning")
@@ -875,6 +984,14 @@ def main() -> int:
     elif args.stage == "stage3a":
         check_stage3a(data, args.min_scenarios, args.max_scenarios, args.mf_id, errors)
         operation_scenarios = load_json(Path(args.operation_scenarios)) if args.operation_scenarios else None
+        # 自动修正格式问题（空格、括号等）
+        format_fixes = apply_scenario_enum_format_fixes(data, operation_scenarios)
+        if format_fixes:
+            warnings.extend({
+                "stage": "stage3a_format_fix",
+                "message": f"已自动修正 {len(format_fixes)} 个格式问题（空格、括号等）",
+                "fixes": format_fixes,
+            } if isinstance(warnings, list) else {"format_fixes": format_fixes})
         check_stage3a_operation_scenarios(data, operation_scenarios, errors)
         # 自动应用"不涉及"修改
         fixes = apply_scenario_condition_corrections(data, errors)

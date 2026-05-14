@@ -69,7 +69,7 @@ def merge_hara(stage3a_data: dict, stage3b_data: dict) -> dict:
             "道路条件": scenario.get("道路条件"),
             "环境条件": scenario.get("环境条件"),
             "车辆状态": scenario.get("车辆状态"),
-            "车速（km/h）": scenario.get("车速（km/h）"),
+            "车速(km/h)": scenario.get("车速(km/h)"),
             "特殊要素": scenario.get("特殊要素"),
             "附加条件": scenario.get("附加条件"),
             "驾驶员是否在车上": scenario.get("驾驶员是否在车上"),
@@ -112,7 +112,7 @@ def main() -> int:
     parser.add_argument("--stage3a", required=True, help="Path to Stage 3A JSON file")
     parser.add_argument("--stage3b", required=True, help="Path to Stage 3B JSON file")
     parser.add_argument("--output", required=True, help="Output path for merged HARA JSON")
-    parser.add_argument("--pretty", action="store_true", help="Pretty print JSON output")
+    parser.add_argument("--compact", action="store_true", help="Output compact JSON (default: pretty formatted)")
     args = parser.parse_args()
 
     # Load input files
@@ -122,9 +122,9 @@ def main() -> int:
     # Merge
     merged_data = merge_hara(stage3a_data, stage3b_data)
 
-    # Write output
+    # Write output (默认美化格式，便于查看)
     output_path = Path(args.output)
-    indent = 2 if args.pretty else None
+    indent = None if args.compact else 2
     output_path.write_text(
         json.dumps(merged_data, ensure_ascii=False, indent=indent),
         encoding="utf-8",
