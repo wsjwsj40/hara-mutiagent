@@ -1,0 +1,34 @@
+{
+  "meta": {
+    "run_id": "epb_hara_001",
+    "stage": "stage0",
+    "source_file": "test.txt",
+    "extraction_timestamp": "2026-05-14T00:00:00Z",
+    "function_count": 1,
+    "system_hints": ["EPB", "电子驻车制动"]
+  },
+  "function_mapping": [
+    {
+      "Function_ID": "F001",
+      "extracted_function_name": "静态开关拉起功能",
+      "function_category": "EPB控制功能",
+      "remark": "EPB静态开关拉起控制",
+      "function_description": "通过拉起EPB开关实现车辆驻车功能",
+      "source_table": "test.txt",
+      "source_evidence": "2.3.1",
+      "section_id": "2.3.1",
+      "section_title": "静态开关拉起功能",
+      "detail_section_ids": ["2.3.1.1", "2.3.1.2"],
+      "detail_text": "工作电源挡位：ON/OK挡电源挡位工作。备注：在EPB休眠后，整车电源处于OFF挡位时，拉起EPB开关，EPB能被唤醒并执行拉起。\n\n功能逻辑：\n（1）车辆静止（车速≤3km/h）且EPB处于已释放（Released）状态，拉起EPB开关执行拉起，车辆驻车。\n（2）EPB处于已拉起(Applied)状态，EPB开关拉起，仪表上显示文字提示\"电子驻车已启动\"，EPB不响应。\n（3）EPB已释放(Released)，且整车网络处于休眠状态，拉EPB开关，可唤醒EPB系统并执行拉起。\n（4）EPB处于释放中（Releasing），拉起EPB开关，EPB释放后不会执行拉起，须松开开关并在完成释放动作后再次拉起开关，执行拉起。",
+      "detail_evidence_blocks": ["2.3.1.1", "2.3.1.2"],
+      "is_hara_relevant": true,
+      "exclude_reason": null,
+      "system_hint": "EPB电子驻车制动系统",
+      "matched_system": "EPB",
+      "match_confidence": "high",
+      "match_reason": "文本明确提及EPB系统、电子驻车制动相关功能",
+      "conflict_notes": null
+    }
+  ],
+  "review_log": []
+}

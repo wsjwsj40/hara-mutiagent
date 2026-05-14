@@ -1,0 +1,72 @@
+{
+  "run_id": "epb_hara_001",
+  "stage": "stage1r",
+  "review_timestamp": "2026-05-14T00:00:00Z",
+  "overall_result": "pass",
+  "reviewed_by": "hara-stage1r",
+  "issues": [],
+  "fixes": [],
+  "checks": {
+    "basic": {
+      "row_count": {
+        "status": "pass",
+        "description": "derive_mf行数=1，等于function_mapping行数"
+      },
+      "coverage": {
+        "status": "pass",
+        "description": "F001静态开关拉起功能已覆盖"
+      },
+      "field_completeness": {
+        "status": "pass",
+        "description": "所有故障字段完整"
+      }
+    },
+    "field_review": {
+      "功能丧失": {
+        "status": "pass",
+        "risk_assessment": "是",
+        "description": "拉起开关时EPB不执行，导致溜车风险"
+      },
+      "过大": {
+        "status": "pass",
+        "risk_assessment": "是",
+        "description": "夹紧力过大导致制动系统损坏"
+      },
+      "过早": {
+        "status": "pass",
+        "risk_assessment": "否",
+        "description": "驾驶员即时触发的离散行为，不存在提前执行"
+      },
+      "过小": {
+        "status": "pass",
+        "risk_assessment": "是",
+        "description": "制动类功能，夹紧力不足导致溜车，已正确填写"
+      },
+      "过晚": {
+        "status": "pass",
+        "risk_assessment": "是",
+        "description": "响应延迟导致驻车时机滞后"
+      },
+      "非预期激活": {
+        "status": "pass",
+        "risk_assessment": "是",
+        "description": "行驶中意外驻车导致失控"
+      },
+      "卡滞": {
+        "status": "pass",
+        "risk_assessment": "是",
+        "description": "状态无法切换导致无法驻车或无法释放"
+      },
+      "方向错误": {
+        "status": "pass",
+        "risk_assessment": "是",
+        "description": "二元状态功能，请求与执行相反导致风险"
+      }
+    },
+    "consistency": {
+      "status": "pass",
+      "description": "所有field_reasoning.是否有安全风险与derive_mf字段值一致"
+    }
+  },
+  "summary": "Stage 1功能故障推导质量良好，所有安全相关故障类型均已正确识别并填写，制动类功能的过小故障未遗漏，推理过程完整。可以进入Stage 2。"
+}
