@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allowAllWrite": true,
+    "allowBash": true,
+    "allowNetwork": false,
+    "allow": [
+      "Write(output/*)"
+    ]
+  }
+}

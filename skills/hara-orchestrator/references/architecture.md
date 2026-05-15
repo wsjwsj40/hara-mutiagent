@@ -33,9 +33,9 @@ hara-orchestrator（只编排，不分析）
 
 ### 0. 必须使用真实子 agent
 
-编排器和 Stage3B/Stage3R 总控必须通过实际 `spawn_agent(agent_type="worker", fork_context=false, ...)` 创建独立 worker。不要用同一个上下文里的多段提示、普通并行工具调用或人工清空上下文来模拟子 agent。
+编排器和 Stage3B/Stage3R 总控必须通过实际 `Agent(subagent_type="claude", run_in_background=true, ...)` 创建独立 worker。不要用同一个上下文里的多段提示、普通并行工具调用或人工清空上下文来模拟子 agent。
 
-如果当前环境没有 `spawn_agent`/`wait_agent`，停止并报告无法满足隔离要求；不要降级为单上下文执行。
+如果当前环境没有 `Agent` 工具，停止并报告无法满足隔离要求；不要降级为单上下文执行。
 
 ### 1. 编排器不做语义分析
 

@@ -78,7 +78,7 @@ def parse_asil_suffix(s_value: str, e_value: str, c_value: str) -> str:
     C: C0=0, C1=1, C2=2, C3=3
 
     Sum -> ASIL:
-    0-2: QM, 3-4: ASIL A, 5: ASIL B, 6: ASIL C, 7: ASIL D
+    0-6: QM, 7: ASIL A, 8: ASIL B, 9: ASIL C, 10: ASIL D
     """
     s_match = re.search(r"S(\d+)", str(s_value).upper())
     e_match = re.search(r"E(\d+)", str(e_value).upper())
@@ -93,15 +93,15 @@ def parse_asil_suffix(s_value: str, e_value: str, c_value: str) -> str:
 
     total = s_score + e_score + c_score
 
-    if total <= 2:
+    if total <= 6:
         return "QM"
-    elif total == 3:
+    elif total == 7:
         return "ASIL A"
-    elif total == 4:
+    elif total == 8:
         return "ASIL B"
-    elif total == 5:
+    elif total == 9:
         return "ASIL C"
-    elif total >= 6:
+    elif total >= 10:
         return "ASIL D"
     return "QM"
 
@@ -175,7 +175,9 @@ def main() -> int:
     parser.add_argument("--safety",
                         help="Safety goal and safe state JSON file")
     parser.add_argument("--ftti",
-                        help="FTTI JSON file")
+                        help="(Deprecated) Single FTTI JSON file, use --ftti-batches instead")
+    parser.add_argument("--ftti-batches", nargs="+",
+                        help="FTTI batch JSON files")
     parser.add_argument("--output", required=True,
                         help="Output path for merged Stage 3B SEC JSON")
     parser.add_argument("--meta-mf-id", help="MF_ID for meta section")
@@ -215,10 +217,17 @@ def main() -> int:
         output_data["safety_goal"] = safety_data.get("safety_goal", "")
         output_data["safe_state"] = safety_data.get("safe_state", "")
 
-    # Merge FTTI
-    if args.ftti:
-        ftti_records = load_json(Path(args.ftti))
-        ftti_by_no = {rec["List_No"]: rec for rec in ftti_records}
+    # Merge FTTI (支持批次文件或单个文件)
+    all_ftti_records = []
+    if args.ftti_batches:
+        for ftti_path in args.ftti_batches:
+            all_ftti_records.extend(load_json(Path(ftti_path)))
+    elif args.ftti:
+        # 向后兼容：单个 FTTI 文件
+        all_ftti_records.extend(load_json(Path(args.ftti)))
+
+    if all_ftti_records:
+        ftti_by_no = {rec["List_No"]: rec for rec in all_ftti_records}
 
         for record in sec_records:
             list_no = record.get("List_No")
@@ -244,7 +253,9 @@ def main() -> int:
         all_input_files = (args.s_batches or []) + (args.e_batches or []) + (args.c_batches or [])
         if args.safety:
             all_input_files.append(args.safety)
-        if args.ftti:
+        if args.ftti_batches:
+            all_input_files.extend(args.ftti_batches)
+        elif args.ftti:
             all_input_files.append(args.ftti)
         for file_path in all_input_files:
             Path(file_path).unlink()

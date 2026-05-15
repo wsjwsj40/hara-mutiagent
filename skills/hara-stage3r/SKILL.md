@@ -30,8 +30,8 @@ description: Stage 3R HARA 场景评审。用于评审单个合并后的 output/
 ## 子 Agent 边界
 
 - 本 skill 由编排器作为独立子 agent 调用，负责当前 MF 的 Stage3R 总控。
-- 当前 MF 内再使用 `spawn_agent(agent_type="worker", fork_context=false, ...)` 为每个 `stage3r_<MF_ID>_batchXX_context.json` 创建真实独立评审子任务。
-- 不要在 Stage3R 总控上下文里直接评审批次；如果当前环境没有 `spawn_agent`，停止并报告无法满足真正子 agent 隔离要求。
+- 当前 MF 内再使用 `Agent(subagent_type="claude", run_in_background=true, ...)` 为每个 `stage3r_<MF_ID>_batchXX_context.json` 创建真实独立评审子任务。
+- 不要在 Stage3R 总控上下文里直接评审批次；如果当前环境没有 `Agent` 工具，停止并报告无法满足真正子 agent 隔离要求。
 - 批次子任务提示词使用 `references/review-batch-prompt.md`，并把对应批次上下文作为唯一 HARA 输入。
 - 批次子任务只输出本批 `per_scenario_reviews` JSON 数组；总控 agent 合并所有批次后写 review JSON。
 
@@ -52,9 +52,9 @@ description: Stage 3R HARA 场景评审。用于评审单个合并后的 output/
 1. 先验证合并后的 Stage 3。
 2. 读取 Stage3 context，评审 `max_asil_planning` 的总体覆盖方向。
 3. 生成评审批次上下文，每批最多 5 条 HARA 记录。
-4. 对每个批次使用 `spawn_agent` 启动独立 worker 评审子任务，输出本批 `per_scenario_reviews`。
+4. 对每个批次使用 `Agent(subagent_type=”claude”, run_in_background=true, ...)` 启动独立 worker 评审子任务，输出本批 `per_scenario_reviews`。
 5. 合并所有批次结论，修正明确的结构、ASIL 算术、枚举或推理一致性问题。
-6. 按 `references/stage3-review.md` 中的“输出 Schema（严格遵循）”写入 review JSON，尤其 `per_scenario_reviews` 必须包含验证脚本要求的所有字段。
+6. 按 `references/stage3-review.md` 中的”输出 Schema（严格遵循）”写入 review JSON，尤其 `per_scenario_reviews` 必须包含验证脚本要求的所有字段。
 7. 如果修正了 Stage 3 JSON，重新运行 Stage 3 和 Stage 3 Review 验证并确认通过。
 
 ## 验证

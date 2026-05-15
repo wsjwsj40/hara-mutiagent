@@ -42,6 +42,10 @@ def merge_hara(stage3a_data: dict, stage3b_data: dict) -> dict:
     # Build lookup by List_No
     sec_by_no = {record["List_No"]: record for record in sec_records}
 
+    # Get global safety_goal and safe_state from stage3b
+    global_safety_goal = stage3b_data.get("safety_goal", "")
+    global_safe_state = stage3b_data.get("safe_state", "")
+
     # Merge each scenario with its SEC record
     hara_records = []
     for scenario in scenarios:
@@ -82,7 +86,6 @@ def merge_hara(stage3a_data: dict, stage3b_data: dict) -> dict:
             "C-解释": sec_record.get("C-解释"),
             "控制能力 'C'": sec_record.get("控制能力 'C'"),
             "结果ASIL": sec_record.get("结果ASIL"),
-            "FTTI(ms)": sec_record.get("FTTI(ms)"),
             "备注": sec_record.get("备注", ""),
         }
         # Add reasoning if present (参照 stage3a/scenario_reasoning 写法，在每条记录内部)
@@ -90,6 +93,26 @@ def merge_hara(stage3a_data: dict, stage3b_data: dict) -> dict:
             merged["scenario_reasoning"] = scenario_reasoning
         if sec_reasoning:
             merged["sec_reasoning"] = sec_reasoning
+
+        # 获取 ASIL 值用于判断是否为 QM
+        asil_value = merged.get("结果ASIL", "")
+        is_qm = "QM" in asil_value or asil_value == "QM"
+
+        # 获取 FTTI 值
+        ftti_value = sec_record.get("FTTI(ms)", "")
+
+        # 根据 ASIL 是否为 QM，决定安全相关字段（顺序：safety_goal -> safe_state -> FTTI）
+        if is_qm:
+            # QM 不需要安全目标、安全状态、FTTI
+            merged["safety_goal"] = ""
+            merged["safe_state"] = ""
+            merged["FTTI(ms)"] = ""
+        else:
+            # 非 QM 使用全局安全目标和安全状态
+            merged["safety_goal"] = global_safety_goal
+            merged["safe_state"] = global_safe_state
+            merged["FTTI(ms)"] = ftti_value
+
         hara_records.append(merged)
 
     # Build merged output
@@ -100,8 +123,6 @@ def merge_hara(stage3a_data: dict, stage3b_data: dict) -> dict:
         "meta": meta,
         "max_asil_planning": stage3a_data.get("max_asil_planning"),
         "hara": hara_records,
-        "safety_goal": stage3b_data.get("safety_goal"),
-        "safe_state": stage3b_data.get("safe_state"),
     }
 
 
