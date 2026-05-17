@@ -23,7 +23,11 @@
 ```text
 python tools/hara/check_stage_json.py --stage stage0 --json output/<run_id>_stage0_function_mapping.json
 python tools/hara/check_stage_json.py --stage stage1 --json output/<run_id>_stage1_derive_mf.json --stage0 output/<run_id>_stage0_function_mapping.json --fix
+python tools/hara/check_stage_json.py --stage stage2_slice --json output/<run_id>_stage2_<Function_ID>_mf_vehicle_hazards.json --stage1 output/<run_id>_stage1_<Function_ID>_derive_mf.json --function-id <Function_ID> --fix
+# Stage2R 逐 Function_ID 评审并修正单功能片段后，再执行最终合并：
+python tools/hara/merge_stage2.py --stage0 output/<run_id>_stage0_function_mapping.json --input-dir output --prefix <run_id> --out output/<run_id>_stage2_mf_vehicle_hazards.json
 python tools/hara/check_stage_json.py --stage stage2 --json output/<run_id>_stage2_mf_vehicle_hazards.json --stage1 output/<run_id>_stage1_derive_mf.json --fix
+python tools/hara/merge_stage2_review.py --input-dir output --stage0 output/<run_id>_stage0_function_mapping.json --prefix <run_id> --out output/<run_id>_stage2_review.json
 python tools/hara/check_stage_json.py --stage stage3a --json output/<run_id>_stage3a_<MF_ID>_scenarios.json --mf-id <MF_ID> --operation-scenarios knowledge-base/automotive/hara/common/operation_scenarios.json --min-scenarios 10 --max-scenarios 20 --fix
 python tools/hara/check_stage_json.py --stage stage3b_raw --json output/<run_id>_stage3b_<MF_ID>_sec.json --mf-id <MF_ID> --min-scenarios 10 --max-scenarios 20
 python tools/hara/check_stage_json.py --stage stage3 --json output/<run_id>_stage3_<MF_ID>_hara.json --mf-id <MF_ID> --stage2 output/<run_id>_stage2_mf_vehicle_hazards.json --operation-scenarios knowledge-base/automotive/hara/common/operation_scenarios.json --min-scenarios 10 --max-scenarios 20 --fix

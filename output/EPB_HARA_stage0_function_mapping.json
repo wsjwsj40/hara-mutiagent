@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "run_id": "EPB_HARA",
+    "stage": "stage0",
+    "generated_at": "2026-05-17T18:30:00+08:00",
+    "source_file": "test.txt",
+    "system": "EPB",
+    "knowledge_files_used": []
+  },
+  "function_mapping": [
+    {
+      "Function_ID": "F001",
+      "extracted_function_name": "静态开关拉起功能",
+      "function_category": "驻车制动",
+      "remark": "",
+      "function_description": "通过EPB静态开关拉起操作实现车辆驻车制动的功能",
+      "source_table": "2.3.1",
+      "source_evidence": "2.3.1 静态开关拉起功能",
+      "section_id": "2.3.1",
+      "section_title": "静态开关拉起功能",
+      "detail_section_ids": ["2.3.1.1", "2.3.1.2"],
+      "detail_text": "工作电源挡位：ON/OK挡电源挡位工作。备注：在EPB休眠后，整车电源处于OFF挡位时，拉起EPB开关，EPB能被唤醒并执行拉起。功能逻辑：（1）车辆静止（车速≤3km/h）且EPB处于已释放状态，拉起EPB开关执行拉起，车辆驻车。（2）EPB处于已拉起状态，EPB开关拉起，仪表上显示文字提示\"电子驻车已启动\"，EPB不响应。（3）EPB已释放，且整车网络处于休眠状态，拉EPB开关，可唤醒EPB系统并执行拉起。（4）EPB处于释放中，拉起EPB开关，EPB释放后不会执行拉起，须松开开关并在完成释放动作后再次拉起开关，执行拉起。",
+      "detail_evidence_blocks": [
+        "工作电源挡位：ON/OK挡电源挡位工作。备注：在EPB休眠后，整车电源处于OFF挡位时，拉起EPB开关，EPB能被唤醒并执行拉起。",
+        "车辆静止（车速≤3km/h）且EPB处于已释放状态，拉起EPB开关执行拉起，车辆驻车。",
+        "EPB处于已拉起状态，EPB开关拉起，仪表上显示文字提示\"电子驻车已启动\"，EPB不响应。",
+        "EPB已释放，且整车网络处于休眠状态，拉EPB开关，可唤醒EPB系统并执行拉起。",
+        "EPB处于释放中，拉起EPB开关，EPB释放后不会执行拉起，须松开开关并在完成释放动作后再次拉起开关，执行拉起。"
+      ],
+      "is_hara_relevant": true,
+      "exclude_reason": "",
+      "system_hint": "EPB（电子驻车制动系统）",
+      "matched_system": "EPB",
+      "match_confidence": "high",
+      "match_reason": "源文档明确描述EPB（电子驻车制动系统）静态开关拉起功能",
+      "conflict_notes": ""
+    }
+  ],
+  "review_log": []
+}

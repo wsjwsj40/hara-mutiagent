@@ -1,106 +1,72 @@
-# Stage 2R: 整车危害评审
+# Stage 2R：整车危害评审方法
 
-目标：单独评审 Stage 2 的数量覆盖和危害映射合理性。
+本文件只定义 Stage2R 的语义评审方法，不定义流程或 JSON schema。流程见 `SKILL.md`。
 
-## 输入
+## 定位
 
-- Stage 1 JSON：`output/<run_id>_stage1_derive_mf.json`
-- Stage 2 JSON：`output/<run_id>_stage2_mf_vehicle_hazards.json`
-- `vehicle_hazards.json`
+- 结构、字段、行数、编号和 `hazard_reasoning` 机械一致性由 `stage2_slice --fix` 处理。
+- Stage2R review 文件只做人工审查留痕。
+- 最终硬门禁是修正后的 Stage2 单功能片段，以及合并后的最终 Stage2 JSON。
 
-## 输出
+## Review 留痕建议
 
-- Review JSON：`output/<run_id>_stage2_review.json`
-- 修正后的 Stage 2 JSON：仍写回 `output/<run_id>_stage2_mf_vehicle_hazards.json`
-
-## 输出 Schema（严格遵循）
+Review 文件必须是合法 JSON，并能识别当前 `Function_ID`。推荐包含：
 
 ```json
 {
   "meta": {
-    "run_id": "<run_id>",
-    "stage": "stage2_review",
-    "target_file": "output/<run_id>_stage2_mf_vehicle_hazards.json",
-    "generated_at": "ISO时间戳"
+    "function_id": "<Function_ID>",
+    "target_file": "output/<run_id>_stage2_<Function_ID>_mf_vehicle_hazards.json"
   },
   "overall_result": "pass/failed",
-  "issues": [
-    {
-      "id": "ST2R-001",
-      "severity": "error/warning",
-      "target": "<Milf_ID或row>",
-      "description": "<问题描述>",
-      "evidence": "<Stage1/Stage2/危害库证据>"
-    }
-  ],
-  "fixes": [
-    {
-      "target_file": "output/<run_id>_stage2_mf_vehicle_hazards.json",
-      "target": "<Milf_ID或字段>",
-      "change": "<修正内容>",
-      "reason": "<修正原因>"
-    }
-  ],
-  "review_log": [
-    {
-      "stage": "stage2_review",
-      "target": "stage2",
-      "result": "pass/failed",
-      "issues": [],
-      "fixes": [],
-      "notes": ""
-    }
-  ]
+  "issues": [],
+  "fixes": [],
+  "notes": ""
 }
 ```
 
-## 检查点
+这不是严格 schema。`merge_stage2_review.py` 优先读取 `meta.function_id`；如果没有，则从文件名 `<run_id>_stage2_<Function_ID>_review.json` 推断。
 
-### 基础检查
+## 评审顺序
 
-1. 数量：`mf_vehicle_hazards` 行数必须等于 Stage 1 所有非 `nan` 故障单元格数量总和。
-2. 覆盖：每个非 `nan` 功能故障必须在 Stage 2 出现一次且仅一次。
-3. 描述：`故障描述` 必须保留 MF 编号、子功能、故障引导词和故障内容。
-4. 危害库：`整车级危害` 必须来自 `vehicle_hazards.json`。
+1. 先看 `stage2_slice --fix` 的 warnings。
+2. 对每条 MF 重新判断车辆级后果和整车危害选择。
+3. 重点检查驻车/保持/约束类故障、方向错误、原子性和 Stage3 可用性。
+4. 发现语义错误时，修正 Stage2 单功能片段并记录依据。
+5. 修改后重新运行 `stage2_slice --fix`。
 
-### 推理过程检查
+## 逐 MF 检查
 
-5. **推理记录完整性**：每个 MF 必须有对应的推理记录。
-   - `hazard_reasoning` 数组长度必须等于 `mf_vehicle_hazards` 行数
-   - 每条推理必须包含：`功能影响`、`车辆级后果`、`关键判断`、`选择的危害`、`选择理由`
+对每条 MF 问五个问题：
 
-6. **推理与结果一致性**：
-   - `推理.选择的危害` 必须与对应行的 `整车级危害` 完全一致
-   - `车辆级后果` 必须正确描述车辆实际发生的运动/状态变化
-   - `关键判断` 必须正确区分对立面（如"自己动了"vs"想动动不了"）
+- 源故障是否可追溯到当前 Stage1 单功能片段？
+- 功能影响是否准确？
+- 车辆级后果是否描述车辆实际运动或状态变化？
+- `整车级危害` 是否来自危害库，且比相似选项更合适？
+- `故障描述` 是否清晰、单一、可直接供 Stage3 使用？
 
-### 危害映射逻辑检查
+## 重点复核项
 
-7. **逻辑正确性**：整车危害应与故障内容和车辆级行为一致。评审方法：
-   - 分析故障导致的**车辆级后果**（车辆发生了什么异常运动/状态？）
-   - 区分关键对立面（车辆是"自己动了"还是"想动动不了"？是"意外获得某能力"还是"失去某能力"？）
-   - 参考 `03-hazard.md` 中的危害选项定义，验证选择的危害是否准确描述了该后果
-   - 常见错误：把"功能失效"直接当成"无法X"，而忽略了失效后车辆可能发生的非预期运动
+- 驻车/保持/约束失效：区分“自己动了”和“想动动不了”。
+- 方向错误：区分功能内部动作反向和车辆驱动方向反向。
+- 推理链：`功能影响`、`车辆级后果`、`关键判断`、`选择的危害`、`选择理由` 必须互相支撑。
+- 原子性：一个 MF 只对应一个主要故障效应和一个主要整车危害。
+- 原因混入：不要把传感器、软件、通信、诊断等内部原因写成整车危害。
+- Stage3 可用性：`故障描述` 是 Stage3 的故障描述来源，不能含混或混入相邻功能。
 
-8. **常见错误重点检查**：
+## 常见错误
 
-   **错误1：驻车/保持/约束失效映射为"无法纵向移动"**
-   - 检查方法：分析功能失效后，车辆是"想动动不了"还是"自己会溜车"？
-   - 正确映射：驻车失效 → "非预期的纵向移动"
+| 错误类型 | 表现 | 修正方向 |
+|---|---|---|
+| 驻车失效映射错误 | 把溜车风险写成无法纵向移动 | 改为非预期移动类危害 |
+| 方向错误扩大化 | 功能动作反向被写成车辆反向行驶 | 只描述由功能反向导致的车辆级后果 |
+| 功能症状当危害 | 整车级危害写成功能失效或驾驶员无法操作 | 改成车辆运动/状态层面的危害 |
+| 推理补答案 | `hazard_reasoning` 只是复述最终危害 | 补充车辆级后果和关键判断 |
+| 多效应打包 | 一个 MF 同时包含多个故障或多个危害 | 拆回单一故障效应或修正描述 |
 
-   **错误2：功能方向错误混淆为车辆运动方向错误**
-   - 检查方法：区分"功能内部状态方向错误"（如EPB拉起变释放）和"驱动系统方向错误"（前进变后退）
-   - 正确映射：功能方向错误导致的车辆移动 → "非预期的纵向移动"
-   - 仅当驱动系统执行相反运动方向时才使用"在相反方向非预期的纵向移动"
+## 修正原则
 
-   **错误3：混淆"自己动了"和"想动动不了"**
-   - "自己动了"：无运动请求时车辆发生位移 → "非预期的纵向移动"
-   - "想动动不了"：有运动请求但车辆无响应 → "无法纵向移动"
-
-### 原子性和跨阶段一致性
-
-9. 原子性：每个 MF 只能对应一个故障效应和一个主要整车危害。若 `故障描述` 或 `备注` 中出现"或/以及/同时"连接两个相反状态、两个相邻功能或两个不同整车危害，必须回退修正 Stage 1 或在 Stage 2 中修正为单一 MF 描述；不得把两个故障打包成一个 MF 进入 Stage 3。
-
-10. 跨阶段一致性：Stage 2 的 `故障描述` 是 Stage 3 每行 `故障描述` 的唯一来源。评审时必须确认该描述足够清晰、单一、可直接用于 HARA 场景，不会诱导 Stage 3 混入相邻功能故障。
-
-如果发现遗漏、重复或危害映射错误，修改 Stage 2 JSON，在 review JSON 的 `fixes` 中说明，并在 Stage 2 JSON `review_log` 中记录通过。
+- 只修正证据充分的问题。
+- 机械问题先交给 `check_stage_json.py --fix` 或回到 Stage2 片段修正。
+- 语义问题直接修正 Stage2 单功能片段，并在 review 留痕中记录 `target`、`change`、`reason`。
+- 修改后的片段必须重新通过 `stage2_slice --fix`。

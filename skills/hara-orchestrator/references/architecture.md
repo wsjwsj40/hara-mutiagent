@@ -107,10 +107,10 @@ stage3_context_<MF_ID>.json + stage3_<MF_ID>_hara.json
 |---|---|---|
 | Stage0 | 源文本/文档 | Stage0 JSON |
 | Stage0R | Stage0 JSON + 源文档可选 | Stage0 review JSON + 修正后 Stage0 |
-| Stage1 | Stage0 JSON | Stage1 JSON |
-| Stage1R | Stage0 + Stage1 JSON | Stage1 review JSON + 修正后 Stage1 |
-| Stage2 | Stage0 + Stage1 JSON | Stage2 JSON |
-| Stage2R | Stage1 + Stage2 JSON | Stage2 review JSON + 修正后 Stage2 |
+| Stage1 | Stage1 context by Function_ID | Stage1 single-function JSON |
+| Stage1R | Stage1 context + Stage1 single-function JSON | Stage1 review trace + 修正后 Stage1 single-function JSON |
+| Stage2 | Stage1 single-function JSON + current Stage0 context | Stage2 single-function JSON |
+| Stage2R | Stage1 single-function JSON + Stage2 single-function JSON | Stage2 review trace + 修正后 Stage2 single-function JSON |
 | Stage3A | `stage3_context_<MF_ID>.json` | Stage3A scenarios JSON |
 | Stage3B | Stage3 context + Stage3A JSON + batch contexts | Stage3B SEC JSON |
 | Stage3R | Stage3 context + merged Stage3 JSON + review batch contexts | Stage3R review JSON |

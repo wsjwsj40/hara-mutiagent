@@ -16,6 +16,10 @@ except ImportError:  # pragma: no cover
     from .asil_matrix import ASIL_ORDER, normalize_asil
 
 STAGE1_GUIDE_COLUMNS = ["功能丧失", "过大", "过早", "过小", "过晚", "非预期激活", "卡滞", "方向错误"]
+STAGE1_TOP_LEVEL_KEYS = {"meta", "derive_mf", "review_log", "knowledge_evidence", "field_reasoning"}
+STAGE1_REASONING_FIELDS = ["功能输出", "异常情况", "后果", "是否有安全风险"]
+STAGE1_MERGED_FAULT_FIELDS = ["过大/过早", "过小/过晚"]
+STAGE1_MULTI_EFFECT_MARKERS = ["或", "以及", "同时", "；", ";"]
 STAGE2_TRACE_COLUMNS = ["Function_ID", "source_function_name", "Stage1_Row", "Fault_Field", "Stage1_Fault_Text"]
 STAGE3_REVIEW_COLUMNS = [
     "List_No",
@@ -132,20 +136,409 @@ def check_stage0(data: Any, errors: list[dict[str, Any]]) -> None:
     check_required(function_mapping, ["Function_ID", "extracted_function_name"], "stage0", errors)
 
 
-def check_stage1(data: Any, stage0: Any | None, errors: list[dict[str, Any]]) -> None:
+def compact_field_name(value: Any) -> str:
+    return str(value).replace("\n", "").replace(" ", "").replace("　", "").strip()
+
+
+def has_compact_key(row: dict[str, Any], expected: str) -> bool:
+    expected_compact = compact_field_name(expected)
+    return any(compact_field_name(key) == expected_compact for key in row)
+
+
+def parse_positive_int(value: Any) -> int | None:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def stage0_function_name(row: dict[str, Any]) -> str:
+    return str(
+        row.get("extracted_function_name")
+        or row.get("function_name")
+        or row.get("子功能")
+        or ""
+    ).strip()
+
+
+def stage0_function_id(row: dict[str, Any]) -> str:
+    return str(row.get("Function_ID") or row.get("function_id") or "").strip()
+
+
+def find_stage0_function(stage0: Any | None, function_id: str | None) -> dict[str, Any] | None:
+    if stage0 is None or not function_id:
+        return None
+    for row in rows(stage0, "function_mapping"):
+        if stage0_function_id(row) == function_id:
+            return row
+    return None
+
+
+def check_stage1_top_level(data: dict[str, Any], errors: list[dict[str, Any]], stage: str = "stage1") -> None:
+    extra = sorted(key for key in data.keys() if key not in STAGE1_TOP_LEVEL_KEYS)
+    missing = sorted(key for key in STAGE1_TOP_LEVEL_KEYS if key not in data)
+    if extra:
+        errors.append({
+            "stage": stage,
+            "error": "unexpected_top_level_keys",
+            "keys": extra,
+        })
+    if missing:
+        errors.append({
+            "stage": stage,
+            "error": "missing_top_level_keys",
+            "keys": missing,
+        })
+
+
+def check_stage1_derive_rows(
+    derive_mf: list[dict[str, Any]],
+    stage0: Any | None,
+    errors: list[dict[str, Any]],
+    warnings: list[dict[str, Any]] | None = None,
+    auto_fix: bool = False,
+    stage: str = "stage1",
+) -> None:
+    check_required(derive_mf, DERIVE_MF_COLUMNS, stage, errors)
+    for index, row in enumerate(derive_mf, start=1):
+        for merged_field in STAGE1_MERGED_FAULT_FIELDS:
+            if has_compact_key(row, merged_field):
+                errors.append({
+                    "stage": stage,
+                    "row": index,
+                    "error": "merged_fault_field_not_allowed",
+                    "field": merged_field,
+                    "message": "幅值问题和时序问题必须拆开判断，不能使用合并字段。",
+                })
+
+        no_value = get_by_alias(row, "No.")
+        parsed_no = parse_positive_int(no_value)
+        if parsed_no != index:
+            errors.append({
+                "stage": stage,
+                "row": index,
+                "error": "no_must_be_consecutive",
+                "expected": index,
+                "actual": no_value,
+            })
+
+        for field in DERIVE_MF_COLUMNS:
+            value = get_by_alias(row, field)
+            if value is not None and str(value).strip() == "":
+                if auto_fix and field in STAGE1_GUIDE_COLUMNS:
+                    continue
+                errors.append({
+                    "stage": stage,
+                    "row": index,
+                    "error": "field_must_not_be_blank",
+                    "field": field,
+                    "message": "不适用字段应填写 nan，不能留空。",
+                })
+
+        if warnings is not None:
+            for field in STAGE1_GUIDE_COLUMNS:
+                value = get_by_alias(row, field)
+                text = str(value or "").strip()
+                if text and not is_nan_like(text) and any(marker in text for marker in STAGE1_MULTI_EFFECT_MARKERS):
+                    warnings.append({
+                        "stage": stage,
+                        "row": index,
+                        "field": field,
+                        "warning": "possible_multiple_fault_effects_in_one_cell",
+                        "message": "每个故障单元格应只描述一个清晰故障效应，请确认没有把多个故障合并在一个字段中。",
+                    })
+
+    if stage0 is None:
+        return
+
+    function_mapping = rows(stage0, "function_mapping")
+    expected = len(function_mapping)
+    if len(derive_mf) != expected:
+        errors.append({
+            "stage": stage,
+            "error": "row_count_mismatch",
+            "expected_from_stage0": expected,
+            "actual": len(derive_mf),
+        })
+        return
+
+    for index, (stage0_row, stage1_row) in enumerate(zip(function_mapping, derive_mf), start=1):
+        expected_name = stage0_function_name(stage0_row)
+        actual_name = str(get_by_alias(stage1_row, "子功能") or "").strip()
+        if expected_name and actual_name != expected_name:
+            errors.append({
+                "stage": stage,
+                "row": index,
+                "error": "function_name_mismatch_with_stage0",
+                "expected": expected_name,
+                "actual": actual_name,
+            })
+
+
+def check_stage1_field_reasoning(
+    data: dict[str, Any],
+    derive_mf: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    warnings: list[dict[str, Any]] | None = None,
+    auto_fix: bool = False,
+    stage: str = "stage1",
+) -> None:
+    reasoning = data.get("field_reasoning")
+    if not isinstance(reasoning, list):
+        errors.append({
+            "stage": stage,
+            "error": "field_reasoning_must_be_array",
+        })
+        return
+
+    seen_rows: set[int] = set()
+    for entry_index, entry in enumerate(reasoning, start=1):
+        if not isinstance(entry, dict):
+            errors.append({
+                "stage": stage,
+                "row": entry_index,
+                "error": "field_reasoning_entry_must_be_object",
+            })
+            continue
+
+        row_no = parse_positive_int(entry.get("row"))
+        if row_no is None or row_no > len(derive_mf):
+            errors.append({
+                "stage": stage,
+                "row": entry_index,
+                "error": "field_reasoning_row_invalid",
+                "actual": entry.get("row"),
+            })
+            continue
+        if row_no in seen_rows:
+            errors.append({
+                "stage": stage,
+                "row": row_no,
+                "error": "duplicate_field_reasoning_row",
+            })
+        seen_rows.add(row_no)
+
+        derive_row = derive_mf[row_no - 1]
+        expected_name = str(get_by_alias(derive_row, "子功能") or "").strip()
+        actual_name = str(entry.get("子功能") or "").strip()
+        if expected_name and actual_name != expected_name:
+            errors.append({
+                "stage": stage,
+                "row": row_no,
+                "error": "field_reasoning_function_name_mismatch",
+                "expected": expected_name,
+                "actual": actual_name,
+            })
+
+        field_reasoning = entry.get("字段推理")
+        if not isinstance(field_reasoning, list):
+            errors.append({
+                "stage": stage,
+                "row": row_no,
+                "error": "字段推理_must_be_array",
+            })
+            continue
+
+        seen_fields: set[str] = set()
+        for item_index, item in enumerate(field_reasoning, start=1):
+            if not isinstance(item, dict):
+                errors.append({
+                    "stage": stage,
+                    "row": row_no,
+                    "item": item_index,
+                    "error": "field_reasoning_item_must_be_object",
+                })
+                continue
+
+            field = str(item.get("字段") or "").strip()
+            if field not in STAGE1_GUIDE_COLUMNS:
+                errors.append({
+                    "stage": stage,
+                    "row": row_no,
+                    "item": item_index,
+                    "error": "invalid_reasoning_field",
+                    "field": field,
+                    "allowed": STAGE1_GUIDE_COLUMNS,
+                })
+                continue
+            if field in seen_fields:
+                errors.append({
+                    "stage": stage,
+                    "row": row_no,
+                    "field": field,
+                    "error": "duplicate_reasoning_field",
+                })
+            seen_fields.add(field)
+
+            inference = item.get("推理")
+            if not isinstance(inference, dict):
+                errors.append({
+                    "stage": stage,
+                    "row": row_no,
+                    "field": field,
+                    "error": "推理_must_be_object",
+                })
+                continue
+
+            missing_reasoning = [
+                required
+                for required in STAGE1_REASONING_FIELDS
+                if required not in inference or str(inference.get(required) or "").strip() == ""
+            ]
+            if missing_reasoning:
+                errors.append({
+                    "stage": stage,
+                    "row": row_no,
+                    "field": field,
+                    "error": "reasoning_missing_required_fields",
+                    "fields": missing_reasoning,
+                })
+                continue
+
+            risk = str(inference.get("是否有安全风险") or "").strip()
+            if risk not in {"是", "否"}:
+                errors.append({
+                    "stage": stage,
+                    "row": row_no,
+                    "field": field,
+                    "error": "risk_flag_must_be_yes_or_no",
+                    "actual": risk,
+                })
+                continue
+
+            fault_value = get_by_alias(derive_row, field)
+            if risk == "是" and is_nan_like(fault_value):
+                replacement = str(inference.get("异常情况") or "").strip()
+                if auto_fix and replacement:
+                    derive_row[field] = replacement
+                    if warnings is not None:
+                        warnings.append({
+                            "stage": f"{stage}_auto_fix",
+                            "row": row_no,
+                            "field": field,
+                            "warning": "risk_yes_fault_nan_replaced_from_reasoning",
+                            "old_value": fault_value,
+                            "new_value": replacement,
+                            "message": "已根据 field_reasoning.推理.异常情况 回填故障字段。",
+                        })
+                    continue
+                errors.append({
+                    "stage": stage,
+                    "row": row_no,
+                    "field": field,
+                    "error": "risk_yes_but_fault_is_nan",
+                })
+            elif risk == "否" and not is_nan_like(fault_value):
+                if auto_fix:
+                    derive_row[field] = "nan"
+                    if warnings is not None:
+                        warnings.append({
+                            "stage": f"{stage}_auto_fix",
+                            "row": row_no,
+                            "field": field,
+                            "warning": "risk_no_fault_replaced_with_nan",
+                            "old_value": fault_value,
+                            "new_value": "nan",
+                            "message": "已根据 field_reasoning.推理.是否有安全风险=否 将故障字段置为 nan。",
+                        })
+                    continue
+                errors.append({
+                    "stage": stage,
+                    "row": row_no,
+                    "field": field,
+                    "error": "risk_no_but_fault_is_not_nan",
+                })
+
+        missing_fields = [field for field in STAGE1_GUIDE_COLUMNS if field not in seen_fields]
+        if missing_fields:
+            errors.append({
+                "stage": stage,
+                "row": row_no,
+                "error": "field_reasoning_missing_fault_fields",
+                "fields": missing_fields,
+            })
+
+    expected_rows = set(range(1, len(derive_mf) + 1))
+    missing_rows = sorted(expected_rows - seen_rows)
+    if missing_rows:
+        errors.append({
+            "stage": stage,
+            "error": "field_reasoning_missing_rows",
+            "rows": missing_rows,
+        })
+
+
+def check_stage1(
+    data: Any,
+    stage0: Any | None,
+    errors: list[dict[str, Any]],
+    warnings: list[dict[str, Any]] | None = None,
+    auto_fix: bool = False,
+) -> None:
+    if not isinstance(data, dict):
+        errors.append({"stage": "stage1", "error": "top_level_must_be_object"})
+        return
+    check_stage1_top_level(data, errors)
     derive_mf = rows(data, "derive_mf")
     if not derive_mf:
         errors.append({"stage": "stage1", "error": "derive_mf_empty"})
-    check_required(derive_mf, DERIVE_MF_COLUMNS, "stage1", errors)
-    if stage0 is not None:
-        expected = len(rows(stage0, "function_mapping"))
-        if len(derive_mf) != expected:
-            errors.append({
-                "stage": "stage1",
-                "error": "row_count_mismatch",
-                "expected_from_stage0": expected,
-                "actual": len(derive_mf),
-            })
+        return
+    check_stage1_derive_rows(derive_mf, stage0, errors, warnings, auto_fix=auto_fix)
+    check_stage1_field_reasoning(data, derive_mf, errors, warnings, auto_fix=auto_fix)
+
+
+def check_stage1_slice(
+    data: Any,
+    stage0: Any | None,
+    function_id: str | None,
+    errors: list[dict[str, Any]],
+    warnings: list[dict[str, Any]] | None = None,
+    auto_fix: bool = False,
+) -> None:
+    if not isinstance(data, dict):
+        errors.append({"stage": "stage1_slice", "error": "top_level_must_be_object"})
+        return
+    check_stage1_top_level(data, errors, stage="stage1_slice")
+
+    derive_mf = rows(data, "derive_mf")
+    if len(derive_mf) != 1:
+        errors.append({
+            "stage": "stage1_slice",
+            "error": "stage1_slice_must_have_exactly_one_derive_mf_row",
+            "actual": len(derive_mf),
+        })
+        return
+
+    if rows(data, "field_reasoning") and len(rows(data, "field_reasoning")) != 1:
+        errors.append({
+            "stage": "stage1_slice",
+            "error": "stage1_slice_must_have_exactly_one_field_reasoning_row",
+            "actual": len(rows(data, "field_reasoning")),
+        })
+
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    meta_function_id = str(meta.get("function_id") or meta.get("Function_ID") or "").strip()
+    effective_function_id = function_id or meta_function_id
+    if function_id and meta_function_id and function_id != meta_function_id:
+        errors.append({
+            "stage": "stage1_slice",
+            "error": "function_id_mismatch_with_meta",
+            "expected": function_id,
+            "actual": meta_function_id,
+        })
+
+    target_stage0_row = find_stage0_function(stage0, effective_function_id)
+    if stage0 is not None and effective_function_id and target_stage0_row is None:
+        errors.append({
+            "stage": "stage1_slice",
+            "error": "function_id_not_found_in_stage0",
+            "function_id": effective_function_id,
+        })
+
+    stage0_slice = {"function_mapping": [target_stage0_row]} if target_stage0_row else None
+    check_stage1_derive_rows(derive_mf, stage0_slice, errors, warnings, auto_fix=auto_fix, stage="stage1_slice")
+    check_stage1_field_reasoning(data, derive_mf, errors, warnings, auto_fix=auto_fix, stage="stage1_slice")
 
 
 def count_stage1_faults(stage1: Any) -> int:
@@ -157,31 +550,125 @@ def count_stage1_faults(stage1: Any) -> int:
     )
 
 
-def check_stage2(data: Any, stage1: Any | None, errors: list[dict[str, Any]], warnings: list[dict[str, Any]] | None = None) -> None:
+def check_stage2(
+    data: Any,
+    stage1: Any | None,
+    errors: list[dict[str, Any]],
+    warnings: list[dict[str, Any]] | None = None,
+    stage: str = "stage2",
+    allow_empty: bool = False,
+) -> None:
+    if not isinstance(data, dict):
+        errors.append({"stage": stage, "error": "top_level_must_be_object"})
+        return
     hazards = rows(data, "mf_vehicle_hazards")
-    if not hazards:
-        errors.append({"stage": "stage2", "error": "mf_vehicle_hazards_empty"})
-    check_required(hazards, MF_VEHICLE_HAZARDS_COLUMNS, "stage2", errors)
+    expected = count_stage1_faults(stage1) if stage1 is not None else None
+    if not hazards and not allow_empty and (expected is None or expected > 0):
+        errors.append({"stage": stage, "error": "mf_vehicle_hazards_empty"})
+    check_required(hazards, MF_VEHICLE_HAZARDS_COLUMNS, stage, errors)
+
+    for index, row in enumerate(hazards, start=1):
+        no_value = get_by_alias(row, "No.")
+        parsed_no = parse_positive_int(no_value)
+        if parsed_no != index:
+            errors.append({
+                "stage": stage,
+                "row": index,
+                "error": "no_must_be_consecutive",
+                "expected": index,
+                "actual": no_value,
+            })
+
     if warnings is not None:
         for index, row in enumerate(hazards, start=1):
             missing_trace = [field for field in STAGE2_TRACE_COLUMNS if get_by_alias(row, field) is None]
             if missing_trace:
                 warnings.append({
-                    "stage": "stage2",
+                    "stage": stage,
                     "row": index,
                     "warning": "stage2_traceability_fields_missing",
                     "fields": missing_trace,
                     "message": "建议补齐 Stage2 追溯字段，便于 Stage3 精确提取 Stage0 detail_text。",
                 })
-    if stage1 is not None:
-        expected = count_stage1_faults(stage1)
+
+    reasoning = rows(data, "hazard_reasoning")
+    if hazards and len(reasoning) != len(hazards):
+        errors.append({
+            "stage": stage,
+            "error": "hazard_reasoning_count_mismatch",
+            "expected": len(hazards),
+            "actual": len(reasoning),
+        })
+    for index, (hazard_row, reasoning_row) in enumerate(zip(hazards, reasoning), start=1):
+        selected = ""
+        inference = reasoning_row.get("推理") if isinstance(reasoning_row.get("推理"), dict) else {}
+        if isinstance(inference, dict):
+            selected = str(inference.get("选择的危害") or "").strip()
+        hazard = str(get_by_alias(hazard_row, "整车级危害") or "").strip()
+        if selected and hazard and selected != hazard:
+            errors.append({
+                "stage": stage,
+                "row": index,
+                "error": "hazard_reasoning_selection_mismatch",
+                "expected": hazard,
+                "actual": selected,
+            })
+
+    if expected is not None:
         if len(hazards) != expected:
             errors.append({
-                "stage": "stage2",
+                "stage": stage,
                 "error": "row_count_mismatch",
                 "expected_from_stage1_non_nan_faults": expected,
                 "actual": len(hazards),
             })
+
+
+def check_stage2_slice(
+    data: Any,
+    stage1: Any | None,
+    function_id: str | None,
+    errors: list[dict[str, Any]],
+    warnings: list[dict[str, Any]] | None = None,
+) -> None:
+    if not isinstance(data, dict):
+        errors.append({"stage": "stage2_slice", "error": "top_level_must_be_object"})
+        return
+
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    meta_function_id = str(meta.get("function_id") or meta.get("Function_ID") or "").strip()
+    effective_function_id = function_id or meta_function_id
+    if function_id and meta_function_id and function_id != meta_function_id:
+        errors.append({
+            "stage": "stage2_slice",
+            "error": "function_id_mismatch_with_meta",
+            "expected": function_id,
+            "actual": meta_function_id,
+        })
+
+    stage1_meta = stage1.get("meta") if isinstance(stage1, dict) and isinstance(stage1.get("meta"), dict) else {}
+    stage1_function_id = str(stage1_meta.get("function_id") or stage1_meta.get("Function_ID") or "").strip()
+    if effective_function_id and stage1_function_id and effective_function_id != stage1_function_id:
+        errors.append({
+            "stage": "stage2_slice",
+            "error": "function_id_mismatch_with_stage1_slice",
+            "expected": effective_function_id,
+            "actual": stage1_function_id,
+        })
+
+    hazards = rows(data, "mf_vehicle_hazards")
+    for index, row in enumerate(hazards, start=1):
+        row_function_id = str(get_by_alias(row, "Function_ID") or "").strip()
+        if effective_function_id and row_function_id and row_function_id != effective_function_id:
+            errors.append({
+                "stage": "stage2_slice",
+                "row": index,
+                "error": "hazard_function_id_mismatch",
+                "expected": effective_function_id,
+                "actual": row_function_id,
+            })
+
+    check_stage2(data, stage1, errors, warnings, stage="stage2_slice", allow_empty=True)
 
 
 def check_stage3(data: Any, min_scenarios: int, max_scenarios: int, mf_id: str | None, errors: list[dict[str, Any]]) -> None:
@@ -773,9 +1260,9 @@ def normalize_stage_data(data: Any, stage: str) -> Any:
     if not isinstance(data, dict):
         return data
     normalized = dict(data)
-    if stage == "stage1":
+    if stage in {"stage1", "stage1_slice"}:
         normalized["derive_mf"] = normalize_rows(rows(data, "derive_mf"), DERIVE_MF_COLUMNS)
-    elif stage == "stage2":
+    elif stage in {"stage2", "stage2_slice"}:
         source_rows = rows(data, "mf_vehicle_hazards")
         normalized_rows = normalize_rows(source_rows, MF_VEHICLE_HAZARDS_COLUMNS)
         for source_row, normalized_row in zip(source_rows, normalized_rows):
@@ -950,13 +1437,14 @@ def check_stage4(data: Any, hara_data: Any | None, errors: list[dict[str, Any]],
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stage", choices=["stage0", "stage1", "stage2", "stage3", "stage3a", "stage3b", "stage3b_raw", "stage3_review", "stage4"], required=True)
+    parser.add_argument("--stage", choices=["stage0", "stage1", "stage1_slice", "stage2", "stage2_slice", "stage3", "stage3a", "stage3b", "stage3b_raw", "stage3_review", "stage4"], required=True)
     parser.add_argument("--json", required=True)
     parser.add_argument("--stage0")
     parser.add_argument("--stage1")
     parser.add_argument("--stage2")
     parser.add_argument("--hara")
     parser.add_argument("--operation-scenarios")
+    parser.add_argument("--function-id")
     parser.add_argument("--mf-id")
     parser.add_argument("--min-scenarios", type=int, default=10)
     parser.add_argument("--max-scenarios", type=int, default=20)
@@ -971,10 +1459,16 @@ def main() -> int:
         check_stage0(data, errors)
     elif args.stage == "stage1":
         stage0 = load_json(Path(args.stage0)) if args.stage0 else None
-        check_stage1(data, stage0, errors)
+        check_stage1(data, stage0, errors, warnings, auto_fix=args.fix)
+    elif args.stage == "stage1_slice":
+        stage0 = load_json(Path(args.stage0)) if args.stage0 else None
+        check_stage1_slice(data, stage0, args.function_id, errors, warnings, auto_fix=args.fix)
     elif args.stage == "stage2":
         stage1 = normalize_stage_data(load_json(Path(args.stage1)), "stage1") if args.stage1 else None
         check_stage2(data, stage1, errors, warnings)
+    elif args.stage == "stage2_slice":
+        stage1 = normalize_stage_data(load_json(Path(args.stage1)), "stage1_slice") if args.stage1 else None
+        check_stage2_slice(data, stage1, args.function_id, errors, warnings)
     elif args.stage == "stage3":
         check_stage3(data, args.min_scenarios, args.max_scenarios, args.mf_id, errors)
         stage2 = normalize_stage_data(load_json(Path(args.stage2)), "stage2") if args.stage2 else None
@@ -1015,7 +1509,7 @@ def main() -> int:
         check_stage4(data, hara_data, errors, warnings)
 
     fixed = False
-    if args.fix and not errors and args.stage in {"stage1", "stage2", "stage3", "stage3a", "stage3b", "stage4"}:
+    if args.fix and not errors and args.stage in {"stage1", "stage1_slice", "stage2", "stage2_slice", "stage3", "stage3a", "stage3b", "stage4"}:
         dump_json(normalize_stage_data(data, args.stage), json_path)
         fixed = True
 

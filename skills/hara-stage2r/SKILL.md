@@ -1,56 +1,55 @@
 ---
 name: hara-stage2r
-description: Stage 2R 整车危害评审。用于在进入 Stage 3A 前，基于 Stage 1 故障评审 output/<RUN_ID>_stage2_mf_vehicle_hazards.json，检查 MF 数量、Milf_ID 连续性、整车危害映射准确性、hazard_reasoning 一致性和常见映射错误。
+description: Stage 2R 整车危害语义评审。用于在 Stage 2 单功能片段机器校验通过后，按 Function_ID 独立复核 output/<RUN_ID>_stage2_<Function_ID>_mf_vehicle_hazards.json 的危害映射、hazard_reasoning、追溯字段和故障描述边界。最终 Stage2 合并必须在所有 Stage2R 单片评审通过后执行。
 ---
 
-# Stage 2R：整车危害评审
+# Stage 2R：整车危害语义评审
+
+## 文档分工
+
+- 本文件：定义 Stage2R 的职责、上下文边界、执行流程和合并门禁。
+- `references/stage2-review.md`：定义危害映射评审方法和 review 留痕建议。
+- Review JSON 只做人工留痕，不作为 Stage3 结构化输入，不做严格 schema 校验。
 
 ## 职责边界
 
-评审并在必要时修正 Stage 2 整车危害。不要生成场景或 SEC 评级。
+Stage2R 只评审当前 `Function_ID` 的 Stage2 单功能片段，重点是危害映射是否准确、`hazard_reasoning` 是否可信、`故障描述` 是否可供 Stage3 使用。
+
+不要读取最终 Stage2 合并文件，不生成 Stage3 场景，不做 SEC/ASIL/安全目标。
 
 ## 输入输出
 
 - 输入：
-  - `output/<RUN_ID>_stage1_derive_mf.json`
-  - `output/<RUN_ID>_stage2_mf_vehicle_hazards.json`
-- 输出：`output/<RUN_ID>_stage2_review.json`；如需修正，同时更新 Stage 2 JSON。
-
-## 上下文加载
-
-1. 读取 Stage 2 JSON。
-2. 只读取 Stage 1 中用于枚举非 `nan` 故障和验证映射的内容。
-3. 读取 `references/stage2-review.md`，确认评审标准。
-4. 只有在危害选择存疑时，才加载 `knowledge-base/automotive/hara/common/03-hazard.md` 和 `vehicle_hazards.json`。
-
-## 检查项
-
-- 行数等于 Stage 1 非 `nan` 故障数。
-- `Milf_ID` 连续：`MF001`、`MF002`。
-- 每个 Stage 1 故障恰好映射到一条 Stage 2 记录。
-- 每条 Stage 2 记录必须保留 `Function_ID`、`source_function_name`、`Stage1_Row`、`Fault_Field`、`Stage1_Fault_Text`，用于 Stage3 精确追溯 Stage0 `detail_text`。
-- `故障描述` 可追溯到 Stage 1，且包含关键适用条件。
-- `整车级危害` 是整车层面的危害，不是功能层面的症状，并且来自允许危害列表。
-- `hazard_reasoning.选择的危害` 与行内 `整车级危害` 一致。
-- 常见错误：
-  - 驻车/保持失效导致溜车时，应属于非预期移动，不是无法移动。
-  - 除非车辆驱动方向确实反转，否则不要把功能方向错误写成车辆反向运动。
+  - `output/<RUN_ID>_stage1_<Function_ID>_derive_mf.json`
+  - `output/<RUN_ID>_stage2_<Function_ID>_mf_vehicle_hazards.json`
+  - 可选：`output/<RUN_ID>_stage1_context_<Function_ID>.json`
+- 单功能 review：`output/<RUN_ID>_stage2_<Function_ID>_review.json`
+- 如需修正，直接更新对应 Stage2 单功能片段。
+- 总 review：由 `tools/hara/merge_stage2_review.py --stage0 <stage0_json>` 合并为 `output/<RUN_ID>_stage2_review.json`。
 
 ## 执行流程
 
-1. 先验证结构和数量。
-2. 建立 Stage 1 非 `nan` 故障索引。
-3. 将每条 Stage 2 记录与源故障和允许危害定义对照。
-4. 只修正明确的映射或结构不一致。
-5. 按 `references/stage2-review.md` 中的“输出 Schema（严格遵循）”写入 review JSON；字段名、顶层 key、数组/对象结构不要改名或增包一层。
-6. 如果修正了 Stage 2 JSON，重新运行 Stage 2 验证并确认通过。
-
-## 验证
+1. 确认当前 Stage2 片段已通过机器校验：
 
 ```text
+python tools/hara/check_stage_json.py --stage stage2_slice --json output/<RUN_ID>_stage2_<Function_ID>_mf_vehicle_hazards.json --stage1 output/<RUN_ID>_stage1_<Function_ID>_derive_mf.json --function-id <Function_ID> --fix
+```
+
+2. 按 `references/stage2-review.md` 复核危害映射、推理链、原子性和 Stage3 可用性。
+3. 只修正证据充分的语义问题；机械问题回到 `stage2_slice --fix`。
+4. 修改 Stage2 单功能片段后，重新运行 `stage2_slice --fix`。
+5. 写入 review 留痕 JSON，至少能让合并脚本识别当前 `Function_ID`。
+
+## 合并门禁
+
+所有 Function_ID 的 Stage2R 通过后，才执行：
+
+```text
+python tools/hara/merge_stage2.py --stage0 output/<RUN_ID>_stage0_function_mapping.json --input-dir output --prefix <RUN_ID> --out output/<RUN_ID>_stage2_mf_vehicle_hazards.json
 python tools/hara/check_stage_json.py --stage stage2 --json output/<RUN_ID>_stage2_mf_vehicle_hazards.json --stage1 output/<RUN_ID>_stage1_derive_mf.json --fix
+python tools/hara/merge_stage2_review.py --input-dir output --stage0 output/<RUN_ID>_stage0_function_mapping.json --prefix <RUN_ID> --out output/<RUN_ID>_stage2_review.json
 ```
 
 ## 返回
 
-返回 `passed` 或 `failed`、问题数量、修正内容、评审文件路径，以及是否允许进入 Stage 3A。
+返回 `passed` 或 `failed`、`Function_ID`、修正摘要、review 文件路径，以及该功能片段是否允许进入最终合并。

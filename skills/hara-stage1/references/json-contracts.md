@@ -60,44 +60,27 @@
 
 只允许顶层 key：`meta`、`derive_mf`、`review_log`、`knowledge_evidence`、`field_reasoning`。
 
-### derive_mf 固定列
+## 单功能片段文件
 
-- `No.`
-- `子功能`
-- `功能丧失`
-- `过大`
-- `过早`
-- `过小`
-- `过晚`
-- `非预期激活`
-- `卡滞`
-- `方向错误`
+文件：`output/<run_id>_stage1_<Function_ID>_derive_mf.json`
+
+单功能片段复用同一顶层结构和行结构，但必须满足：
+
+- `meta.stage` 为 `stage1_slice`。
+- `meta.function_id` 为当前 `Function_ID`。
+- `derive_mf` 只能有 1 行，`No.` 为 `1`。
+- `field_reasoning` 只能有 1 行，`row` 为 `1`。
+- 单片校验命令使用 `check_stage_json.py --stage stage1_slice --function-id <Function_ID>`。
+
+所有单功能片段必须先通过 Stage1R 单功能语义评审；Stage1R 修正并复检后，才通过 `tools/hara/merge_stage1.py` 合并为本阶段最终文件。最终文件再按 `--stage stage1` 进行全量校验。
+
+### derive_mf 约束
+
+`derive_mf` 字段以“完整输出 Schema（严格遵循）”为准，不得新增、合并、拆分或改名字段。
 
 ### field_reasoning 结构（必须包含）
 
-用于记录每个故障字段的推理过程，推理在结论之前生成。
-
-```json
-{
-  "field_reasoning": [
-    {
-      "row": 1,
-      "子功能": "静态开关拉起",
-      "字段推理": [
-        {
-          "字段": "过小",
-          "推理": {
-            "功能输出": "夹紧力（用于保持车辆静止）",
-            "异常情况": "夹紧力低于设计下限",
-            "后果": "无法有效保持车辆静止，车辆可能溜车",
-            "是否有安全风险": "是"
-          }
-        }
-      ]
-    }
-  ]
-}
-```
+`field_reasoning` 用于记录每个故障字段的推理过程，结构以“完整输出 Schema（严格遵循）”为准。
 
 **字段说明**：
 - `字段`：故障类型名称
@@ -106,4 +89,5 @@
 **一致性约束**：
 - 如果 `推理.是否有安全风险` 为 `是`，则 `derive_mf` 中对应字段**不能**是 `nan`，必须填写具体故障描述
 - 如果 `推理.是否有安全风险` 为 `否`，则 `derive_mf` 中对应字段**必须是** `nan`
-- 评审时必须检查 `是否有安全风险` 与最终值的一致性
+- `check_stage_json.py --fix` 可执行机械一致性修复：`是 + nan` 时用同一推理记录的 `异常情况` 回填对应故障字段；`否 + 非 nan` 时将对应故障字段置为 `nan`
+- 评审时必须检查 `是否有安全风险` 与最终值的一致性，并确认自动回填的异常情况是否足够具体

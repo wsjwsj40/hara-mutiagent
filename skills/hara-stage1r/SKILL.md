@@ -1,55 +1,66 @@
 ---
 name: hara-stage1r
-description: Stage 1R 功能故障评审。用于在进入 Stage 2 前，基于 Stage 0 detail_text 评审 output/<RUN_ID>_stage1_derive_mf.json，重点检查 nan 判断、field_reasoning 一致性、遗漏的安全相关故障类型、行数和故障描述质量。
+description: Stage 1R 功能故障语义评审。用于在 Stage 1 单功能片段机器校验通过后，按 Function_ID 独立复核 output/<RUN_ID>_stage1_<Function_ID>_derive_mf.json 的故障适用性、nan 判断、遗漏的安全相关故障类型和故障描述边界。review 文件只作为人工审查依据，不作为后续结构化输入。
 ---
 
-# Stage 1R：功能故障评审
+# Stage 1R：功能故障语义评审
+
+## 文档分工
+
+- 本文件：定义 Stage1R 的职责边界、输入输出、执行流程和门禁。
+- `references/stage1-review.md`：定义语义评审方法、重点复核项和 review 留痕建议。
+- 不再为 Stage1R review 文件维护单独 schema；它不是 Stage2 的结构化输入，不运行 `check_stage_json.py --stage stage1_review`。
 
 ## 职责边界
 
-评审并在必要时修正 Stage 1 功能故障推导。不要生成 Stage 2 整车危害。
+Stage1R 只做单功能语义评审：判断 Stage1 对当前 `Function_ID` 的故障适用性、`nan` 结论、故障描述边界和遗漏风险是否合理。
+
+不要做这些事：
+
+- 不读取完整 Stage1 合并文件。
+- 不生成 Stage2 整车危害。
+- 不重复做 schema、行数、字段完整性等机械校验。
+- 不把 review JSON 当作硬 schema 产物。
 
 ## 输入输出
 
 - 输入：
   - `output/<RUN_ID>_stage0_function_mapping.json`
-  - `output/<RUN_ID>_stage1_derive_mf.json`
-- 输出：`output/<RUN_ID>_stage1_review.json`；如需修正，同时更新 Stage 1 JSON。
+  - `output/<RUN_ID>_stage1_context_<Function_ID>.json`
+  - `output/<RUN_ID>_stage1_<Function_ID>_derive_mf.json`
+- 单功能 review 留痕：`output/<RUN_ID>_stage1_<Function_ID>_review.json`
+- 如需修正，直接更新对应 Stage1 单功能片段。
+- 总 review：由 `tools/hara/merge_stage1_review.py --stage0 <stage0_json>` 合并为 `output/<RUN_ID>_stage1_review.json`。合并脚本只检查 review 文件可解析、可识别 `Function_ID`、覆盖 Stage0 全部功能。
 
 ## 上下文加载
 
-1. 读取 Stage 1 JSON。
-2. 只读取需要复核的 Stage 0 `detail_text` 行。
-3. 读取 `references/stage1-review.md`，确认详细检查项。
+1. 读取当前 Stage1 context 和当前 Stage1 单功能片段。
+2. 只使用当前功能对应的 Stage0 `detail_text`。
+3. 读取 `references/stage1-review.md` 获取语义评审方法。
 4. 只有在故障类型定义不清时，才加载 `knowledge-base/automotive/hara/common/02-malfuntioning_behavior.md`。
-
-## 检查项
-
-- 行数等于 Stage 0 功能数。
-- 每个功能恰好有一行 `derive_mf`。
-- 每个故障字段都有对应的 `field_reasoning`。
-- `field_reasoning.是否有安全风险` 与可见字段值一致：
-  - `是` 表示必须是具体描述，不能是 `nan`。
-  - `否` 表示必须是 `nan`，且要说明为什么不适用。
-- 描述必须是功能边界内的具体异常行为。
-- 保持、制动、保护、力、压力、扭矩类功能不能遗漏安全相关的 `过小`。
-- 方向性或二元状态功能不能遗漏合理的 `方向错误`。
 
 ## 执行流程
 
-1. 先验证结构和数量。
-2. 优先评审高风险或可疑行，再评审低风险行。
-3. 对缺少具体“不适用”理由的 `nan` 字段重新推理。
-4. 只修正证据充分的不一致。
-5. 按 `references/stage1-review.md` 中的“输出 Schema（严格遵循）”写入 review JSON；字段名、顶层 key、数组/对象结构不要改名或增包一层。
-6. 如果修正了 Stage 1 JSON，重新运行 Stage 1 验证并确认通过。
-
-## 验证
+1. 确认当前片段已通过：
 
 ```text
+python tools/hara/check_stage_json.py --stage stage1_slice --json output/<RUN_ID>_stage1_<Function_ID>_derive_mf.json --stage0 output/<RUN_ID>_stage0_function_mapping.json --function-id <Function_ID> --fix
+```
+
+2. 按 `references/stage1-review.md` 复核 `nan`、`过小`、`方向错误`、边界混入、内部原因和整车危害前置等问题。
+3. 只修正证据充分的语义问题；机械一致性问题交给 `check_stage_json.py --fix`。
+4. 如修改 Stage1 单功能片段，重新运行 `stage1_slice --fix`。
+5. 写入 review 留痕 JSON，至少能让合并脚本识别当前 `Function_ID`。
+6. 全部 Function_ID 评审完成后，由编排器合并最终 Stage1 和 Stage1R review。
+
+## 合并门禁
+
+```text
+python tools/hara/merge_stage1.py --stage0 output/<RUN_ID>_stage0_function_mapping.json --input-dir output --prefix <RUN_ID> --out output/<RUN_ID>_stage1_derive_mf.json
 python tools/hara/check_stage_json.py --stage stage1 --json output/<RUN_ID>_stage1_derive_mf.json --stage0 output/<RUN_ID>_stage0_function_mapping.json --fix
+python tools/hara/merge_stage1_review.py --input-dir output --stage0 output/<RUN_ID>_stage0_function_mapping.json --prefix <RUN_ID> --out output/<RUN_ID>_stage1_review.json
 ```
 
 ## 返回
 
-返回 `passed` 或 `failed`、问题数量、修正内容、评审文件路径，以及是否允许进入 Stage 2。
+返回 `passed` 或 `failed`、`Function_ID`、修正摘要、review 文件路径，以及该功能片段是否允许进入最终合并。

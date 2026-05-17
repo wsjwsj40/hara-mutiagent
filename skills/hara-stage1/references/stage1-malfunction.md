@@ -2,18 +2,18 @@
 
 目标：对 Stage 0 的每个功能生成一行 DeriveMF。不能跳过任何 Stage 0 功能。
 
-## 需要读取
+## 文档定位
 
-- `knowledge-base/automotive/hara/common/01-concepts.md`
-- 对应系统知识库：`knowledge-base/automotive/hara/systems/<system>/01-basic_information.md`
-- `knowledge-base/automotive/hara/common/02-malfuntioning_behavior.md`
-- `references/json-contracts.md`
+本文件只定义功能故障判断方法，不定义输出 JSON 结构。
+
+- 输出字段、顶层 key、`field_reasoning` 结构和一致性约束以 `references/json-contracts.md` 为唯一来源。
+- 知识库读取边界由 `skills/hara-stage1/SKILL.md` 控制；系统知识和故障定义仅在判断不清时按需参考。
 
 ## 规则
 
 1. `derive_mf` 行数必须等于 Stage 0 `function_mapping` 行数。
 2. 每个功能只能生成一行。
-3. 固定字段：`No.`、`子功能`、`功能丧失`、`过大`、`过早`、`过小`、`过晚`、`非预期激活`、`卡滞`、`方向错误`。
+3. 按 `references/json-contracts.md` 中约定的故障字段逐项判断，不要新增、合并或改名字段。
 
 4. `过大`、`过早`、`过小`、`过晚` 必须拆开判断。幅值问题和时序问题不能合并。
 
@@ -76,38 +76,7 @@
    - 如果推理显示有安全风险 → 生成具体故障描述
    - 如果推理显示无安全风险或不适用 → 填写 `nan`
 
-   **输出结构**：
-   ```json
-   {
-     "derive_mf": [...],
-     "field_reasoning": [
-       {
-         "row": 1,
-         "子功能": "静态开关拉起",
-         "字段推理": [
-           {
-             "字段": "过小",
-             "推理": {
-               "功能输出": "夹紧力（用于保持车辆静止）",
-               "异常情况": "夹紧力低于设计下限",
-               "后果": "无法有效保持车辆静止，车辆可能溜车",
-               "是否有安全风险": "是"
-             }
-           },
-           {
-             "字段": "过早",
-             "推理": {
-               "功能输出": "驾驶员即时拉起开关",
-               "异常情况": "在拉起开关之前执行",
-               "后果": "不存在提前执行的概念",
-               "是否有安全风险": "否"
-             }
-           }
-         ]
-       }
-     ]
-   }
-   ```
+   推理记录的输出结构以 `references/json-contracts.md` 中的 `field_reasoning` Schema 为准。
 
    **重要约束**：
    - `推理.是否有安全风险` 直接决定最终值：`是` → 填写故障描述，`否` → 填写 `nan`
@@ -116,8 +85,4 @@
 
 9. 必须参考 Stage 0 的 `detail_text`、功能设计意图、系统知识和故障类型定义，不要模板化拼接。
 
-写入后运行。`tools/hara` 必须先按主 `SKILL.md` 的路径规则解析，不要拼到 skill 目录下：
-
-```text
-python tools/hara/check_stage_json.py --stage stage1 --json output/<run_id>_stage1_derive_mf.json --stage0 output/<run_id>_stage0_function_mapping.json --fix
-```
+写入和验证命令以 `skills/hara-stage1/SKILL.md` 为准。

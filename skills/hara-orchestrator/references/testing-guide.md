@@ -13,9 +13,9 @@
 | Stage 0 | 无（输入文档或文本） |
 | Stage 0R | `output/<RUN_ID>_stage0_function_mapping.json` |
 | Stage 1 | `output/<RUN_ID>_stage0_function_mapping.json` |
-| Stage 1R | `output/<RUN_ID>_stage0_function_mapping.json`<br>`output/<RUN_ID>_stage1_derive_mf.json` |
-| Stage 2 | `output/<RUN_ID>_stage1_derive_mf.json` |
-| Stage 2R | `output/<RUN_ID>_stage1_derive_mf.json`<br>`output/<RUN_ID>_stage2_mf_vehicle_hazards.json` |
+| Stage 1R | `output/<RUN_ID>_stage1_context_<Function_ID>.json`<br>`output/<RUN_ID>_stage1_<Function_ID>_derive_mf.json` |
+| Stage 2 | `output/<RUN_ID>_stage1_<Function_ID>_derive_mf.json`<br>`output/<RUN_ID>_stage1_context_<Function_ID>.json` |
+| Stage 2R | `output/<RUN_ID>_stage1_<Function_ID>_derive_mf.json`<br>`output/<RUN_ID>_stage2_<Function_ID>_mf_vehicle_hazards.json` |
 | Stage 3 | `output/<RUN_ID>_stage0_function_mapping.json`<br>`output/<RUN_ID>_stage2_mf_vehicle_hazards.json` |
 | Stage 3R | `output/<RUN_ID>_stage3_<MF_ID>_hara.json`<br>`output/<RUN_ID>_stage2_mf_vehicle_hazards.json` |
 | Stage 4 | 所有 Stage 3 HARA JSON 文件 |
