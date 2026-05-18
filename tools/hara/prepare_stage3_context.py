@@ -4,6 +4,7 @@
 
 This tool does not perform HARA reasoning. It only slices large stage files into
 small, MF-scoped or batch-scoped JSON inputs so Stage 3 agents can stay focused.
+MF contexts reuse Stage 1 function context files instead of re-splitting Stage 0.
 """
 from __future__ import annotations
 
@@ -162,12 +163,12 @@ def pick_matched_functions(stage0_data: Any, mf_row: dict[str, Any], max_items: 
 def match_warnings(mf_row: dict[str, Any], matched_functions: list[dict[str, Any]]) -> list[str]:
     warnings: list[str] = []
     if not matched_functions:
-        warnings.append("未匹配到 Stage0 功能，无法可靠提取 detail_text。请检查 Stage2 是否包含 Function_ID/source_function_name。")
+        warnings.append("未找到功能背景，无法可靠提取 detail_text。请检查 Stage1 context 文件或 Stage2 的 Function_ID/source_function_name。")
         return warnings
     if not mf_function_id(mf_row):
-        warnings.append("Stage2 当前 MF 缺少 Function_ID/source_function_id，已退回到功能名文本匹配。")
+        warnings.append("Stage2 当前 MF 缺少 Function_ID/source_function_id，无法直接定位 Stage1 context，可能退回到功能名文本匹配。")
     if not any(str(row.get("detail_text", "")).strip() for row in matched_functions):
-        warnings.append("已匹配 Stage0 功能，但匹配行缺少 detail_text。")
+        warnings.append("已匹配功能背景，但缺少 detail_text。")
     if len(matched_functions) > 1 and not mf_function_id(mf_row):
         warnings.append("文本匹配到多个候选 Stage0 功能，请由 Stage3A 子 agent 复核 matched_functions。")
     return warnings
@@ -222,46 +223,93 @@ def compact_function(row: dict[str, Any], include_detail: bool) -> dict[str, Any
     return result
 
 
+def safe_name(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
+    return cleaned or "UNKNOWN"
+
+
+def stage1_context_path(stage1_context_dir: Path, run_id: str, fid: str) -> Path:
+    return stage1_context_dir / f"{run_id}_stage1_context_{safe_name(fid)}.json"
+
+
+def load_function_context(
+    stage1_context_dir: Path | None,
+    run_id: str,
+    fid: str,
+    stage0_data: Any | None,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], str | None]:
+    if stage1_context_dir and fid:
+        path = stage1_context_path(stage1_context_dir, run_id, fid)
+        if path.exists():
+            context = load_json(path)
+            function_row = context.get("function") if isinstance(context, dict) else None
+            if isinstance(function_row, dict):
+                return context, [function_row], str(path)
+
+    if stage0_data is not None:
+        for row in rows(stage0_data, "function_mapping"):
+            if function_id(row) == fid:
+                return None, [row], None
+    return None, [], None
+
+
 def build_mf_context(
-    stage0_path: Path,
     stage2_path: Path,
     mf_id: str,
+    stage1_context_dir: Path | None = None,
+    stage0_path: Path | None = None,
     prefix: str | None = None,
 ) -> dict[str, Any]:
-    stage0_data = load_json(stage0_path)
+    stage0_data = load_json(stage0_path) if stage0_path else None
     stage2_data = load_json(stage2_path)
     mf_rows = stage2_lookup(stage2_data)
     if mf_id not in mf_rows:
         raise SystemExit(f"MF_ID not found in Stage 2: {mf_id}")
 
     mf_row = mf_rows[mf_id]
-    matched_functions = pick_matched_functions(stage0_data, mf_row)
+    run_id = infer_run_id(prefix, stage2_path, stage0_path) if stage0_path else infer_run_id(prefix, stage2_path)
+    fid = mf_function_id(mf_row)
+    function_context, matched_functions, function_context_file = load_function_context(stage1_context_dir, run_id, fid, stage0_data)
+    if not matched_functions and stage0_data is not None:
+        matched_functions = pick_matched_functions(stage0_data, mf_row)
     warnings = match_warnings(mf_row, matched_functions)
     if not matched_functions:
-        raise SystemExit(f"Unable to match Stage0 function for {mf_id}. Add Function_ID/source_function_name to Stage2.")
+        raise SystemExit(
+            f"Unable to find function background for {mf_id}. "
+            "Provide --stage1-context-dir containing stage1_context_<Function_ID>.json, "
+            "or pass --stage0 as fallback."
+        )
     hazard_reasoning = hazard_reasoning_lookup(stage2_data).get(mf_id)
-    run_id = infer_run_id(prefix, stage2_path, stage0_path)
+
+    source_files: dict[str, str] = {"stage2": str(stage2_path)}
+    if function_context_file:
+        source_files["stage1_context"] = function_context_file
+    if stage0_path:
+        source_files["stage0_fallback"] = str(stage0_path)
 
     return {
         "meta": {
             "run_id": run_id,
             "stage": "stage3_context",
             "mf_id": mf_id,
-            "source_files": {
-                "stage0": str(stage0_path),
-                "stage2": str(stage2_path),
-            },
+            "function_id": fid,
+            "source_files": source_files,
             "matched_function_count": len(matched_functions),
             "traceability_warnings": warnings,
         },
         "mf": mf_row,
         "hazard_reasoning": hazard_reasoning,
-        "matched_functions": [compact_function(row, include_detail=True) for row in matched_functions],
+        "function_context": function_context,
+        "matched_functions": [
+            compact_function(row, include_detail=function_context is None)
+            for row in matched_functions
+        ],
         "operating_domain_hints": extract_domain_hints(matched_functions),
         "context_policy": {
             "stage3a": "只读取本文件、Stage3A 规则和 operation_scenarios.json；不要读取完整 Stage0/Stage2。",
+            "stage3ar": "只读取 Stage3A 当前 MF 文件、本文件摘要和场景评审规则；不要读取 SEC 评级知识库。",
             "stage3b": "只读取 Stage3A 当前 MF 文件、本文件摘要和必要风险评估章节。",
-            "stage3r": "只读取合并后的当前 MF HARA、本文件摘要和必要评审规则。",
+            "stage3br": "只读取 Stage3A/Stage3B 当前 MF 文件、本文件摘要和 SEC 评审规则。",
         },
     }
 
@@ -284,17 +332,18 @@ def chunks(items: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]]
 
 
 def write_mf_context(args: argparse.Namespace) -> None:
-    stage0_path = Path(args.stage0)
     stage2_path = Path(args.stage2)
+    stage0_path = Path(args.stage0) if args.stage0 else None
+    stage1_context_dir = Path(args.stage1_context_dir) if args.stage1_context_dir else None
     if args.all:
         data = load_json(stage2_path)
         mf_ids = sorted(stage2_lookup(data))
         if not mf_ids:
             raise SystemExit("No MF_ID found in Stage 2")
         out_dir = Path(args.out_dir)
-        run_id = infer_run_id(args.prefix, stage2_path, stage0_path)
+        run_id = infer_run_id(args.prefix, stage2_path, stage0_path) if stage0_path else infer_run_id(args.prefix, stage2_path)
         for mf_id in mf_ids:
-            context = build_mf_context(stage0_path, stage2_path, mf_id, args.prefix)
+            context = build_mf_context(stage2_path, mf_id, stage1_context_dir, stage0_path, args.prefix)
             out = out_dir / f"{run_id}_stage3_context_{mf_id}.json"
             dump_json(context, out)
             print(out)
@@ -302,7 +351,7 @@ def write_mf_context(args: argparse.Namespace) -> None:
 
     if not args.mf_id:
         raise SystemExit("mf-context requires --mf-id or --all")
-    context = build_mf_context(stage0_path, stage2_path, args.mf_id, args.prefix)
+    context = build_mf_context(stage2_path, args.mf_id, stage1_context_dir, stage0_path, args.prefix)
     out = Path(args.out) if args.out else Path(args.out_dir) / f"{context['meta']['run_id']}_stage3_context_{args.mf_id}.json"
     dump_json(context, out)
     print(out)
@@ -351,19 +400,23 @@ def write_sec_batches(args: argparse.Namespace) -> None:
         print(out)
 
 
-def write_review_batches(args: argparse.Namespace) -> None:
+def list_no_key(row: dict[str, Any]) -> str:
+    return str(row.get("List_No") or row.get("List No") or row.get("ListNo") or "").strip()
+
+
+def write_stage3a_review_batches(args: argparse.Namespace) -> None:
     context_path = Path(args.context)
-    stage3_path = Path(args.stage3)
+    stage3a_path = Path(args.stage3a)
     context = load_json(context_path)
-    stage3 = load_json(stage3_path)
-    hara_rows = rows(stage3, "hara")
-    if not hara_rows:
-        raise SystemExit("No hara rows found in Stage 3 file")
+    stage3a = load_json(stage3a_path)
+    scenarios = rows(stage3a, "scenarios")
+    if not scenarios:
+        raise SystemExit("No scenarios found in Stage 3A file")
 
     batch_size = max(1, args.batch_size)
-    batches = chunks(hara_rows, batch_size)
+    batches = chunks(scenarios, batch_size)
     meta = context.get("meta", {})
-    run_id = str(meta.get("run_id") or infer_run_id(args.prefix, stage3_path, context_path))
+    run_id = str(meta.get("run_id") or infer_run_id(args.prefix, stage3a_path, context_path))
     mf_id = str(meta.get("mf_id") or args.mf_id or "")
     if not mf_id:
         raise SystemExit("Missing MF_ID in context; pass --mf-id")
@@ -373,25 +426,83 @@ def write_review_batches(args: argparse.Namespace) -> None:
         data = {
             "meta": {
                 "run_id": run_id,
-                "stage": "stage3r_batch_context",
+                "stage": "stage3ar_batch_context",
                 "mf_id": mf_id,
                 "batch_index": index,
                 "batch_count": len(batches),
                 "batch_size": len(batch),
-                "total_scenarios": len(hara_rows),
+                "total_scenarios": len(scenarios),
                 "source_files": {
                     "stage3_context": str(context_path),
-                    "stage3": str(stage3_path),
+                    "stage3a": str(stage3a_path),
                 },
             },
             "mf_context": context_brief(context),
-            "max_asil_planning": stage3.get("max_asil_planning"),
-            "safety_goal": stage3.get("safety_goal"),
-            "safe_state": stage3.get("safe_state"),
-            "hara": batch,
-            "output_instruction": "只输出本批 per_scenario_reviews 的 JSON 数组；不要输出 Markdown 或解释文字。",
+            "max_asil_planning": stage3a.get("max_asil_planning"),
+            "scenarios": batch,
+            "output_instruction": "只评审 Stage3A 场景和危害事件；不要判断 S/E/C、ASIL、FTTI 或安全目标。输出本批 review JSON 数组。",
         }
-        out = out_dir / f"{run_id}_stage3r_{mf_id}_batch{index:02d}_context.json"
+        out = out_dir / f"{run_id}_stage3ar_{mf_id}_batch{index:02d}_context.json"
+        dump_json(data, out)
+        print(out)
+
+
+def write_stage3b_review_batches(args: argparse.Namespace) -> None:
+    context_path = Path(args.context)
+    stage3a_path = Path(args.stage3a)
+    stage3b_path = Path(args.stage3b)
+    context = load_json(context_path)
+    stage3a = load_json(stage3a_path)
+    stage3b = load_json(stage3b_path)
+    scenarios = rows(stage3a, "scenarios")
+    sec_records = rows(stage3b, "sec_records")
+    if not scenarios:
+        raise SystemExit("No scenarios found in Stage 3A file")
+    if not sec_records:
+        raise SystemExit("No sec_records found in Stage 3B file")
+
+    sec_by_list_no = {list_no_key(row): row for row in sec_records if list_no_key(row)}
+    review_items = [
+        {
+            "scenario": scenario,
+            "sec_record": sec_by_list_no.get(list_no_key(scenario)),
+        }
+        for scenario in scenarios
+    ]
+
+    batch_size = max(1, args.batch_size)
+    batches = chunks(review_items, batch_size)
+    meta = context.get("meta", {})
+    run_id = str(meta.get("run_id") or infer_run_id(args.prefix, stage3a_path, stage3b_path, context_path))
+    mf_id = str(meta.get("mf_id") or args.mf_id or "")
+    if not mf_id:
+        raise SystemExit("Missing MF_ID in context; pass --mf-id")
+
+    out_dir = Path(args.out_dir)
+    for index, batch in enumerate(batches, start=1):
+        data = {
+            "meta": {
+                "run_id": run_id,
+                "stage": "stage3br_batch_context",
+                "mf_id": mf_id,
+                "batch_index": index,
+                "batch_count": len(batches),
+                "batch_size": len(batch),
+                "total_scenarios": len(scenarios),
+                "source_files": {
+                    "stage3_context": str(context_path),
+                    "stage3a": str(stage3a_path),
+                    "stage3b": str(stage3b_path),
+                },
+            },
+            "mf_context": context_brief(context),
+            "max_asil_planning": stage3a.get("max_asil_planning"),
+            "safety_goal": stage3b.get("safety_goal"),
+            "safe_state": stage3b.get("safe_state"),
+            "items": batch,
+            "output_instruction": "只评审 Stage3B SEC、FTTI、安全目标和安全状态；场景质量问题应退回 Stage3AR。输出本批 review JSON 数组。",
+        }
+        out = out_dir / f"{run_id}_stage3br_{mf_id}_batch{index:02d}_context.json"
         dump_json(data, out)
         print(out)
 
@@ -401,8 +512,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     mf = subparsers.add_parser("mf-context", help="Build one MF-scoped Stage 3 context package.")
-    mf.add_argument("--stage0", required=True)
+    mf.add_argument("--stage0", help="Optional Stage0 fallback when stage1 context files are unavailable")
     mf.add_argument("--stage2", required=True)
+    mf.add_argument("--stage1-context-dir", default="output", help="Directory containing <RUN_ID>_stage1_context_<Function_ID>.json")
     mf.add_argument("--mf-id")
     mf.add_argument("--all", action="store_true")
     mf.add_argument("--prefix")
@@ -419,14 +531,24 @@ def build_parser() -> argparse.ArgumentParser:
     sec.add_argument("--batch-size", type=int, default=5)
     sec.set_defaults(func=write_sec_batches)
 
-    review = subparsers.add_parser("review-batches", help="Split merged Stage 3 HARA into Stage 3R batch context files.")
-    review.add_argument("--context", required=True)
-    review.add_argument("--stage3", required=True)
-    review.add_argument("--mf-id")
-    review.add_argument("--prefix")
-    review.add_argument("--out-dir", default="output")
-    review.add_argument("--batch-size", type=int, default=5)
-    review.set_defaults(func=write_review_batches)
+    ar = subparsers.add_parser("stage3a-review-batches", help="Split Stage 3A scenarios into Stage 3AR review batch context files.")
+    ar.add_argument("--context", required=True)
+    ar.add_argument("--stage3a", required=True)
+    ar.add_argument("--mf-id")
+    ar.add_argument("--prefix")
+    ar.add_argument("--out-dir", default="output")
+    ar.add_argument("--batch-size", type=int, default=5)
+    ar.set_defaults(func=write_stage3a_review_batches)
+
+    br = subparsers.add_parser("stage3b-review-batches", help="Split Stage 3A/3B paired rows into Stage 3BR review batch context files.")
+    br.add_argument("--context", required=True)
+    br.add_argument("--stage3a", required=True)
+    br.add_argument("--stage3b", required=True)
+    br.add_argument("--mf-id")
+    br.add_argument("--prefix")
+    br.add_argument("--out-dir", default="output")
+    br.add_argument("--batch-size", type=int, default=5)
+    br.set_defaults(func=write_stage3b_review_batches)
 
     return parser
 

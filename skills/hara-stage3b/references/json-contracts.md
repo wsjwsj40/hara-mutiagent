@@ -1,83 +1,10 @@
 # HARA JSON 契约 - Stage 3B
 
-所有阶段文件必须是 UTF-8 JSON object。不要输出 Markdown 表格、代码围栏、额外说明文本或数组作为顶层结构。
+本文件只定义 Stage3B 输出结构和机器可校验字段。评级方法、子任务编排和合并规则分别见 `stage3b-sec-rating.md`、`sec-batch-prompt.md` 和 `sec-merge-safety.md`。
 
-## 完整输出 Schema（严格遵循）
+所有产物必须是 UTF-8 JSON。不要输出 Markdown、代码围栏、表格或额外说明文本。
 
-```json
-{
-  "meta": {
-    "run_id": "<RUN_ID>",
-    "mf_id": "<MF_ID>",
-    "stage": "stage3b",
-    "generated_at": "ISO时间戳",
-    "source_files": [
-      "output/<RUN_ID>_stage3_context_<MF_ID>.json",
-      "output/<RUN_ID>_stage3a_<MF_ID>_scenarios.json"
-    ],
-    "knowledge_files_used": []
-  },
-  "sec_records": [
-    {
-      "List_No": 1,
-      "E-解释": "<E等级定义+场景暴露理由>",
-      "暴露频率'E'": "E0/E1/E2/E3/E4",
-      "有风险的人员": "<本场景受影响人员>",
-      "可能的后果('S'的理由)": "<人员伤害分析和最高S选择理由>",
-      "Severity 'S'": "S0/S1/S2/S3",
-      "C-解释": "<C等级定义+场景可控性理由>",
-      "控制能力 'C'": "C0/C1/C2/C3",
-      "结果ASIL": "QM/A/B/C/D (Sx+Ey+Cz=score)",
-      "sec_reasoning": {
-        "S评级推理": {
-          "伤害分析": "<伤害机制>",
-          "碰撞对象": "<风险对象或不涉及>",
-          "碰撞速度": "<速度/能量依据或不涉及>",
-          "参考规则": "04-risk_assessment-s.md",
-          "S等级": "S0/S1/S2/S3",
-          "S理由": "<选择理由>"
-        },
-        "E评级推理": {
-          "场景持续时间": "<持续时间或暴露窗口>",
-          "场景发生频率": "<场景频率依据>",
-          "参考规则": "04-risk_assessment-e.md",
-          "E等级": "E0/E1/E2/E3/E4",
-          "E理由": "<选择理由>"
-        },
-        "C评级推理": {
-          "感知来源": "<驾驶员/系统可感知线索>",
-          "反应时间": "<可用反应时间>",
-          "可用操作": "<可采取的控制动作>",
-          "空间约束": "<道路/交通空间约束>",
-          "参考规则": "04-risk_assessment-c.md",
-          "C等级": "C0/C1/C2/C3",
-          "C理由": "<选择理由>"
-        }
-      },
-      "FTTI(ms)": 1000,
-      "备注": ""
-    }
-  ],
-  "safety_goal": "<该MF最高风险路径对应的安全目标>",
-  "safe_state": "<能实现安全目标的安全状态>"
-}
-```
-
-## 使用方式
-
-只在需要确认 Stage 3B JSON 结构时读取本文件。它只定义结构，不承载评级规则。
-
-- 总控导航读 `stage3b-sec-rating.md`
-- 批处理总览读 `sec-batch-prompt.md`
-- 合并、ASIL、安全目标读 `sec-merge-safety.md`
-- ASIL 计算读 `04-risk_assessment-asil.md`
-- S 子任务读 `sec-s-batch-prompt.md` + `04-risk_assessment-s.md`
-- E 子任务读 `sec-e-batch-prompt.md` + `04-risk_assessment-e.md`
-- C 子任务读 `sec-c-batch-prompt.md` + `04-risk_assessment-c.md`
-
-不要为了字段名问题读取 `04-risk_assessment.md` 索引或任何风险评估知识库正文。
-
-## 顶层结构
+## 最终文件
 
 文件：`output/<RUN_ID>_stage3b_<MF_ID>_sec.json`
 
@@ -94,130 +21,104 @@
     "run_id": "<RUN_ID>",
     "mf_id": "<MF_ID>",
     "stage": "stage3b",
-    "generated_at": "<ISO8601>"
+    "generated_at": "ISO时间戳"
   },
-  "sec_records": [],
-  "safety_goal": "...",
-  "safe_state": "..."
+  "sec_records": [
+    {
+      "List_No": 1,
+      "E-解释": "<E等级定义和暴露理由>",
+      "暴露频率'E'": "E0/E1/E2/E3/E4",
+      "有风险的人员": "<受影响人员>",
+      "可能的后果('S'的理由)": "<伤害分析和最高S选择理由>",
+      "Severity 'S'": "S0/S1/S2/S3",
+      "C-解释": "<C等级定义和可控性理由>",
+      "控制能力 'C'": "C0/C1/C2/C3",
+      "结果ASIL": "<由 merge_sec_batches.py 派生，check_stage_json.py 复算校验>",
+      "sec_reasoning": {
+        "S评级推理": {},
+        "E评级推理": {},
+        "C评级推理": {}
+      },
+      "FTTI(ms)": "<可选，毫秒>",
+      "FTTI理由": "<可选>",
+      "备注": ""
+    }
+  ],
+  "safety_goal": "<当前MF最高可信风险路径对应的安全目标>",
+  "safe_state": "<能实现安全目标的安全状态>"
 }
 ```
 
-## sec_records 字段
+## sec_records 约束
 
-每条记录对应 Stage 3A 的一条 `scenarios`，按 `List_No` 一一对应。
+- 数量必须等于 Stage3A `scenarios` 数量。
+- `List_No` 必须与 Stage3A `scenarios[*].List_No` 一一对应。
+- `sec_reasoning` 必须包含 `S评级推理`、`E评级推理`、`C评级推理`。
+- `Severity 'S'` 必须等于 `sec_reasoning.S评级推理.S等级`。
+- `暴露频率'E'` 必须等于 `sec_reasoning.E评级推理.E等级`。
+- `控制能力 'C'` 必须等于 `sec_reasoning.C评级推理.C等级`。
+- `结果ASIL` 只能由合并脚本派生，子任务不要填写；`stage3b` check 会复算校验。
+- Stage3B 只输出 SEC 增量字段，不重复输出 Stage3A 场景字段。
 
-必填字段：
+## S 中间文件
+
+文件：`output/<RUN_ID>_stage3b_<MF_ID>_batchXX_s.json`
+
+顶层为 JSON array。每项必须包含：
+
+- `List_No`
+- `有风险的人员`
+- `可能的后果('S'的理由)`
+- `Severity 'S'`
+- `S评级推理`
+
+`S评级推理` 至少包含 `伤害分析`、`碰撞对象`、`碰撞速度`、`参考规则`、`S等级`、`S理由`。
+
+## E 中间文件
+
+文件：`output/<RUN_ID>_stage3b_<MF_ID>_batchXX_e.json`
+
+顶层为 JSON array。每项必须包含：
 
 - `List_No`
 - `E-解释`
 - `暴露频率'E'`
-- `有风险的人员`
-- `可能的后果('S'的理由)`
-- `Severity 'S'`
+- `E评级推理`
+
+`E评级推理` 至少包含 `场景持续时间`、`场景发生频率`、`参考规则`、`E等级`、`E理由`。
+
+## C 中间文件
+
+文件：`output/<RUN_ID>_stage3b_<MF_ID>_batchXX_c.json`
+
+顶层为 JSON array。每项必须包含：
+
+- `List_No`
 - `C-解释`
 - `控制能力 'C'`
-- `结果ASIL`
-- `sec_reasoning`
+- `C评级推理`
 
-可选字段：
+`C评级推理` 至少包含 `感知来源`、`反应时间`、`可用操作`、`空间约束`、`参考规则`、`C等级`、`C理由`。
 
+## FTTI 中间文件
+
+文件：`output/<RUN_ID>_stage3b_<MF_ID>_batchXX_ftti.json`
+
+顶层为 JSON array。每项必须包含：
+
+- `List_No`
 - `FTTI(ms)`
-- `备注`
+- `FTTI理由`
 
-## sec_record 模板
+QM 场景的 `FTTI(ms)` 可以为空字符串。
+
+## Safety 中间文件
+
+文件：`output/<RUN_ID>_stage3b_<MF_ID>_safety.json`
 
 ```json
 {
-  "List_No": 1,
-  "E-解释": "...",
-  "暴露频率'E'": "E3",
-  "有风险的人员": "...",
-  "可能的后果('S'的理由)": "...",
-  "Severity 'S'": "S1",
-  "C-解释": "...",
-  "控制能力 'C'": "C2",
-  "结果ASIL": "QM (S1+E3+C2=6)",
-  "sec_reasoning": {
-    "S评级推理": {
-      "伤害分析": "...",
-      "碰撞对象": "...",
-      "碰撞速度": "...",
-      "参考规则": "04-risk_assessment-s.md",
-      "S等级": "S1",
-      "S理由": "..."
-    },
-    "E评级推理": {
-      "场景持续时间": "...",
-      "场景发生频率": "...",
-      "参考规则": "04-risk_assessment-e.md",
-      "E等级": "E3",
-      "E理由": "..."
-    },
-    "C评级推理": {
-      "感知来源": "...",
-      "反应时间": "...",
-      "可用操作": "...",
-      "空间约束": "...",
-      "参考规则": "04-risk_assessment-c.md",
-      "C等级": "C2",
-      "C理由": "..."
-    }
-  },
-  "FTTI(ms)": 1000,
-  "备注": ""
+  "safety_goal": "<当前MF级安全目标>",
+  "safe_state": "<当前MF级安全状态>"
 }
 ```
-
-## 一致性约束
-
-- `sec_records` 数量必须等于 Stage 3A `scenarios` 数量。
-- `sec_records[*].List_No` 必须与 Stage 3A `scenarios[*].List_No` 一致。
-- `sec_reasoning.S评级推理.S等级` 必须等于 `Severity 'S'`。
-- `sec_reasoning.E评级推理.E等级` 必须等于 `暴露频率'E'`。
-- `sec_reasoning.C评级推理.C等级` 必须等于 `控制能力 'C'`。
-- `结果ASIL` 必须包含等级和计算式，例如 `B (S2+E4+C2=8)`。
-- Stage 3B 只输出 SEC 增量字段，不重复输出 Stage 3A 的场景字段。
-
-## S/E/C 中间输出
-
-S 子任务只输出 JSON 数组：
-
-```json
-[
-  {
-    "List_No": 1,
-    "有风险的人员": "...",
-    "可能的后果('S'的理由)": "...",
-    "Severity 'S'": "S1",
-    "S评级推理": {}
-  }
-]
-```
-
-E 子任务只输出 JSON 数组：
-
-```json
-[
-  {
-    "List_No": 1,
-    "E-解释": "...",
-    "暴露频率'E'": "E3",
-    "E评级推理": {}
-  }
-]
-```
-
-C 子任务只输出 JSON 数组：
-
-```json
-[
-  {
-    "List_No": 1,
-    "C-解释": "...",
-    "控制能力 'C'": "C2",
-    "C评级推理": {}
-  }
-]
-```
-
-总控 agent 按 `List_No` 合并中间输出，任何一类缺失时不得生成最终文件。

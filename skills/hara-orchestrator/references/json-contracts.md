@@ -36,7 +36,7 @@
 
 ## Review JSON
 
-每个 review 是独立阶段，必须单独模型调用并输出独立文件：
+每个 review 是独立阶段，必须单独模型调用并输出独立文件。以下结构作为标准 review 外壳；Stage3AR/Stage3BR 可保留更轻的人工审查留痕，但建议仍包含 `meta`、`overall_result`、`issues` 和 `fixes` 便于追踪：
 
 ```json
 {
@@ -64,25 +64,7 @@
 
 如果 review 发现问题，先修正被评审 stage JSON，再把修正说明写入 review JSON 的 `fixes`，并在修正后的 stage JSON `review_log` 中记录通过。阶段完成文件中不要保留 `failed` 状态。
 
-Stage 3R 是特殊 review：除 `review_log` 外，还必须包含 `per_scenario_reviews`，逐条对应当前 MF HARA 文件中的每个场景。汇总文件不能替代逐 MF、逐场景 review。
-
-`per_scenario_reviews` 每行必须包含：
-
-- `List_No`
-- `MF_ID`
-- `result`
-- `scenario_reality`
-- `scenario_independence`
-- `internal_consistency`
-- `operational_domain_consistency`
-- `max_asil_search_coverage`
-- `motion_logic`
-- `hazard_event_logic`
-- `sec_reasoning`
-- `safety_goal_consistency`
-- `issues`
-- `fixes`
-- `notes`
+Stage3AR 和 Stage3BR 是语义审查留痕文件，不作为最终交付结构，通常不运行严格 schema check。Stage3A/3B 合并后不再生成独立集成 review 文件，合并完整性由 `check_stage_json.py --stage stage3` 校验。
 
 ## Stage 0: function_mapping
 
@@ -241,7 +223,7 @@ Stage 3R 是特殊 review：除 `review_log` 外，还必须包含 `per_scenario
 - `备注`
 
 六大场景字段 `道路类型`、`道路条件`、`环境条件`、`车辆状态`、`车速(km/h)`、`特殊要素` 必须逐字来自 `knowledge-base/automotive/hara/common/operation_scenarios.json`。库外描述只能写入 `附加条件`。
-合并后的每条 `hara` 记录应保留 `scenario_reasoning` 和 `sec_reasoning`，用于 Stage3R 逐场景评审。
+合并后的每条 `hara` 记录应保留 `scenario_reasoning` 和 `sec_reasoning`，用于追溯 Stage3A 场景推理和 Stage3B SEC 推理。
 
 每个单独 MF 文件内 `List_No` 可从 1 开始；最终合并时由工具重排为全局连续序号。
 

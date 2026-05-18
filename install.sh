@@ -46,7 +46,7 @@ Installed paths under the target directory:
   - skills/hara-stage0 / hara-stage0r
   - skills/hara-stage1 / hara-stage1r
   - skills/hara-stage2 / hara-stage2r
-  - skills/hara-stage3a / hara-stage3b / hara-stage3r
+  - skills/hara-stage3a / hara-stage3ar / hara-stage3b / hara-stage3br
   - skills/hara-stage4 / hara-stage4r
   Knowledge base:
   - knowledge-base/automotive/hara
@@ -127,8 +127,10 @@ if $UNINSTALL; then
     remove_path "${TARGET_DIR}/skills/hara-stage2"
     remove_path "${TARGET_DIR}/skills/hara-stage2r"
     remove_path "${TARGET_DIR}/skills/hara-stage3a"
+    remove_path "${TARGET_DIR}/skills/hara-stage3ar"
     remove_path "${TARGET_DIR}/skills/hara-stage3b"
-    remove_path "${TARGET_DIR}/skills/hara-stage3r"
+    remove_path "${TARGET_DIR}/skills/hara-stage3br"
+    remove_path "${TARGET_DIR}/skills/hara-stage3r"  # legacy Stage3R flow
     remove_path "${TARGET_DIR}/skills/hara-stage4"
     remove_path "${TARGET_DIR}/skills/hara-stage4r"
     remove_path "${TARGET_DIR}/skills/hara-byd-analysis"  # legacy
@@ -156,8 +158,9 @@ install_dir "${REPO_ROOT}/skills/hara-stage1r" "${TARGET_DIR}/skills/hara-stage1
 install_dir "${REPO_ROOT}/skills/hara-stage2" "${TARGET_DIR}/skills/hara-stage2"
 install_dir "${REPO_ROOT}/skills/hara-stage2r" "${TARGET_DIR}/skills/hara-stage2r"
 install_dir "${REPO_ROOT}/skills/hara-stage3a" "${TARGET_DIR}/skills/hara-stage3a"
+install_dir "${REPO_ROOT}/skills/hara-stage3ar" "${TARGET_DIR}/skills/hara-stage3ar"
 install_dir "${REPO_ROOT}/skills/hara-stage3b" "${TARGET_DIR}/skills/hara-stage3b"
-install_dir "${REPO_ROOT}/skills/hara-stage3r" "${TARGET_DIR}/skills/hara-stage3r"
+install_dir "${REPO_ROOT}/skills/hara-stage3br" "${TARGET_DIR}/skills/hara-stage3br"
 install_dir "${REPO_ROOT}/skills/hara-stage4" "${TARGET_DIR}/skills/hara-stage4"
 install_dir "${REPO_ROOT}/skills/hara-stage4r" "${TARGET_DIR}/skills/hara-stage4r"
 

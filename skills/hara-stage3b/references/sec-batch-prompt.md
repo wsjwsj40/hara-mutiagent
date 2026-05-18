@@ -1,45 +1,37 @@
-# Stage 3B 批处理提示词总览
+# Stage 3B 子任务通用约束
 
-Stage 3B 不让一个子任务同时判断 S/E/C。每个批次最多 5 条场景，每批拆成三个互相独立的评级子任务。
+本文件只定义 S/E/C/FTTI batch worker 的共同边界。维度专用提示词见 `sec-s-batch-prompt.md`、`sec-e-batch-prompt.md`、`sec-c-batch-prompt.md`、`sec-ftti-batch-prompt.md`。
 
-## 子任务与规则文件
+## 通用输入
 
-- S 子任务：
-  - 提示词：`sec-s-batch-prompt.md`
-  - 权威知识库：`04-risk_assessment-s.md`
-  - 输出：`有风险的人员`、`可能的后果('S'的理由)`、`Severity 'S'`、`S评级推理`
-- E 子任务：
-  - 提示词：`sec-e-batch-prompt.md`
-  - 权威知识库：`04-risk_assessment-e.md`
-  - 输出：`E-解释`、`暴露频率'E'`、`E评级推理`
-- C 子任务：
-  - 提示词：`sec-c-batch-prompt.md`
-  - 权威知识库：`04-risk_assessment-c.md`
-  - 输出：`C-解释`、`控制能力 'C'`、`C评级推理`
+- 一个 `stage3b_<MF_ID>_batchXX_context.json`
+- 当前维度的 prompt 文件
+- 当前维度的唯一知识库文件
 
-## 总控合并
+不要读取完整 Stage3A 文件、其他 batch、其他 MF、其他 SEC 维度知识库或 `04-risk_assessment.md` 索引。
 
-Stage3B 总控 agent 使用 `sec-merge-safety.md` 和 `04-risk_assessment-asil.md` 合并三个子任务结果：
+## 通用输出
 
-1. 三类子任务都只输出 JSON 数组，按 `List_No` 对齐。
-2. 某个 `List_No` 缺少 S/E/C 任一结果时，禁止生成最终 `sec_records`，必须重跑缺失子任务。
-3. `结果ASIL` 由 S/E/C 后缀求和计算。
-4. 每条最终 `sec_record` 的 `sec_reasoning` 结构为：
+每个子任务写入一个 UTF-8 JSON array 文件：
 
-```json
-{
-  "S评级推理": {},
-  "E评级推理": {},
-  "C评级推理": {}
-}
-```
+- S：`output/<RUN_ID>_stage3b_<MF_ID>_batchXX_s.json`
+- E：`output/<RUN_ID>_stage3b_<MF_ID>_batchXX_e.json`
+- C：`output/<RUN_ID>_stage3b_<MF_ID>_batchXX_c.json`
+- FTTI：`output/<RUN_ID>_stage3b_<MF_ID>_batchXX_ftti.json`
 
-5. 所有批次合并后，为当前 MF 生成一个 `safety_goal` 和一个 `safe_state`。
+数组项必须与 batch context 中的 `List_No` 一一对应。不要输出 Markdown、解释文字、顶层 object 或额外字段集合。
 
 ## 禁止事项
 
-- 不要让 S 子任务读取 E/C 知识库。
-- 不要让 E 子任务读取 S/C 知识库。
-- 不要让 C 子任务读取 S/E 知识库。
-- 不要把 `04-risk_assessment.md` 索引当作规则正文放入任一子任务上下文。
-- 不要在子任务里计算 ASIL 或生成安全目标。
+- S/E/C 子任务不要计算 `结果ASIL`。
+- S/E/C/FTTI 子任务不要生成 `safety_goal` 或 `safe_state`。
+- 不要因为其他维度的预期结果修改本维度评级。
+- 不要跨 batch 参考推理结论。
+- 不要把 JSON 数组放在聊天响应中；只返回输出文件路径和简短状态。
+
+## 失败处理
+
+- 缺少输入字段：停止并报告缺失字段。
+- 无法确定等级：按当前维度知识库给出保守但有依据的等级，不臆造规则。
+- 输出写入失败：停止，不要把结果改为聊天正文。
+- 校验或合并发现缺失：只重跑缺失的维度和 batch。

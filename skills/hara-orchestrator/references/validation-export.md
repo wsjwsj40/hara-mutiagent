@@ -7,7 +7,7 @@
 ## 目录
 
 - JSON 语法与契约预检
-- Stage 3 上下文切片
+- Stage 3 上下文切片与分段评审
 - Stage 3A 和 Stage 3B 合并
 - ASIL 计算与同步
 - 合并与导出
@@ -29,9 +29,8 @@ python tools/hara/merge_stage2.py --stage0 output/<run_id>_stage0_function_mappi
 python tools/hara/check_stage_json.py --stage stage2 --json output/<run_id>_stage2_mf_vehicle_hazards.json --stage1 output/<run_id>_stage1_derive_mf.json --fix
 python tools/hara/merge_stage2_review.py --input-dir output --stage0 output/<run_id>_stage0_function_mapping.json --prefix <run_id> --out output/<run_id>_stage2_review.json
 python tools/hara/check_stage_json.py --stage stage3a --json output/<run_id>_stage3a_<MF_ID>_scenarios.json --mf-id <MF_ID> --operation-scenarios knowledge-base/automotive/hara/common/operation_scenarios.json --min-scenarios 10 --max-scenarios 20 --fix
-python tools/hara/check_stage_json.py --stage stage3b_raw --json output/<run_id>_stage3b_<MF_ID>_sec.json --mf-id <MF_ID> --min-scenarios 10 --max-scenarios 20
+python tools/hara/check_stage_json.py --stage stage3b --json output/<run_id>_stage3b_<MF_ID>_sec.json --stage3a output/<run_id>_stage3a_<MF_ID>_scenarios.json --mf-id <MF_ID> --min-scenarios 10 --max-scenarios 20
 python tools/hara/check_stage_json.py --stage stage3 --json output/<run_id>_stage3_<MF_ID>_hara.json --mf-id <MF_ID> --stage2 output/<run_id>_stage2_mf_vehicle_hazards.json --operation-scenarios knowledge-base/automotive/hara/common/operation_scenarios.json --min-scenarios 10 --max-scenarios 20 --fix
-python tools/hara/check_stage_json.py --stage stage3_review --json output/<run_id>_stage3_<MF_ID>_review.json --hara output/<run_id>_stage3_<MF_ID>_hara.json --mf-id <MF_ID>
 python tools/hara/check_stage_json.py --stage stage4 --json output/<run_id>_stage4_sg_sum.json --hara output/<run_id>_stage3_<MF_ID>_hara.json --fix
 ```
 
@@ -39,39 +38,45 @@ python tools/hara/check_stage_json.py --stage stage4 --json output/<run_id>_stag
 
 ## Stage 3 上下文切片
 
-Stage3A/B/R 不直接读取完整 Stage0/Stage2。先为每个 MF 生成最小上下文包：
+Stage3A/3AR/3B/3BR 不直接读取完整 Stage0/Stage2。Stage3 前只把 Stage2 中产生的 MF 拆成一 MF 一个上下文包；功能背景复用 Stage1 的 `stage1_context_<Function_ID>.json`。
 
 ```text
-python tools/hara/prepare_stage3_context.py mf-context --stage0 output/<run_id>_stage0_function_mapping.json --stage2 output/<run_id>_stage2_mf_vehicle_hazards.json --all --prefix <run_id> --out-dir output
+python tools/hara/prepare_stage3_context.py mf-context --stage2 output/<run_id>_stage2_mf_vehicle_hazards.json --stage1-context-dir output --all --prefix <run_id> --out-dir output
 ```
 
 单个 MF：
 
 ```text
-python tools/hara/prepare_stage3_context.py mf-context --stage0 output/<run_id>_stage0_function_mapping.json --stage2 output/<run_id>_stage2_mf_vehicle_hazards.json --mf-id <MF_ID> --prefix <run_id> --out output/<run_id>_stage3_context_<MF_ID>.json
+python tools/hara/prepare_stage3_context.py mf-context --stage2 output/<run_id>_stage2_mf_vehicle_hazards.json --stage1-context-dir output --mf-id <MF_ID> --prefix <run_id> --out output/<run_id>_stage3_context_<MF_ID>.json
 ```
 
 Stage3B 评级前生成批次上下文：
 
 ```text
-python tools/hara/prepare_stage3_context.py sec-batches --context output/<run_id>_stage3_context_<MF_ID>.json --stage3a output/<run_id>_stage3a_<MF_ID>_scenarios.json --out-dir output --batch-size 5
+python tools/hara/prepare_stage3_context.py sec-batches --context output/<run_id>_stage3_context_<MF_ID>.json --stage3a output/<run_id>_stage3a_<MF_ID>_scenarios.json --mf-id <MF_ID> --prefix <run_id> --out-dir output --batch-size 5
 ```
 
-Stage3R 评审前生成批次上下文：
+Stage3AR 场景评审前生成批次上下文：
 
 ```text
-python tools/hara/prepare_stage3_context.py review-batches --context output/<run_id>_stage3_context_<MF_ID>.json --stage3 output/<run_id>_stage3_<MF_ID>_hara.json --out-dir output --batch-size 5
+python tools/hara/prepare_stage3_context.py stage3a-review-batches --context output/<run_id>_stage3_context_<MF_ID>.json --stage3a output/<run_id>_stage3a_<MF_ID>_scenarios.json --mf-id <MF_ID> --prefix <run_id> --out-dir output --batch-size 5
+```
+
+Stage3BR SEC 评审前生成批次上下文：
+
+```text
+python tools/hara/prepare_stage3_context.py stage3b-review-batches --context output/<run_id>_stage3_context_<MF_ID>.json --stage3a output/<run_id>_stage3a_<MF_ID>_scenarios.json --stage3b output/<run_id>_stage3b_<MF_ID>_sec.json --mf-id <MF_ID> --prefix <run_id> --out-dir output --batch-size 5
 ```
 
 ## Stage 3A 和 Stage 3B 合并
 
-Stage 3B 完成后、Stage 3R 评审前，必须先合并 Stage 3A 和 Stage 3B 的 JSON 文件：
+Stage3BR 完成后，必须先合并 Stage3A 和 Stage3B 的 JSON 文件：
 
 ```text
 python tools/hara/merge_stage3.py --stage3a output/<run_id>_stage3a_<MF_ID>_scenarios.json --stage3b output/<run_id>_stage3b_<MF_ID>_sec.json --output output/<run_id>_stage3_<MF_ID>_hara.json
 ```
 
-对每个 MF 执行合并，生成完整的 HARA JSON 文件后，才能进入 Stage 3R 评审。
+对每个 MF 执行合并，生成完整的 HARA JSON 文件并通过 `--stage stage3` 后，才能进入 ASIL 同步。
 
 ## ASIL 计算与同步
 
@@ -96,7 +101,7 @@ S3 + E3 + C3 = 9 => C
 S2 + E4 + C2 = 8 => B
 ```
 
-重要顺序：所有 MF 的 Stage 3R review 完成并修正后，再统一执行 ASIL 校验。不要每个 MF 刚生成就校验。
+重要顺序：所有 MF 的 Stage3AR、Stage3BR 完成并修正，且合并后的 Stage3 HARA 通过 `--stage stage3` 后，再统一执行 ASIL 校验。不要每个 MF 刚生成就校验。
 
 每个 Stage 3 文件执行：
 
@@ -111,7 +116,7 @@ python tools/hara/apply_asil_matrix.py --input output/<run_id>_stage3_<MF_ID>_ha
 
 ## 合并与导出
 
-文本质量、场景合理性、运动方向和 S/E/C 语义一致性由 Stage3R、Stage4R 评审处理。脚本只承担确定性校验与格式归一化，不再用脚本自动改写语义文本。
+文本质量、场景合理性和运动方向由 Stage3AR 评审；S/E/C、FTTI、安全目标和安全状态由 Stage3BR 评审；合并完整性、Stage2 对齐和枚举格式由 `check_stage_json.py --stage stage3` 校验。脚本只承担确定性校验与格式归一化，不再用脚本自动改写语义文本。
 
 合并阶段 JSON：
 
@@ -137,6 +142,6 @@ python tools/hara/run_hara_export.py --json output/<run_id>_stage4_sg_sum.json -
 - `mf_vehicle_hazards` 中所有 MF 都出现在 `hara`。
 - 每个 MF 都有 10 到 20 条 HARA 场景。
 - `结果ASIL` 已由工具校验。
-- Stage3R 和 Stage4R 均已通过；若发现语义质量问题，应由对应 review agent 修正或重跑相关阶段。
+- Stage3AR、Stage3BR、Stage3 合并校验和 Stage4R 均已通过；若发现语义质量问题，应由对应 review agent 修正或重跑相关阶段。
 - 合并后的 HARA `List_No` 是从 1 开始的全局连续序号。
 - Excel 文件真实生成，空白字段在 Excel 中显示为空白单元格。

@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Merge SEC batch results from S/E/C independent rating agents into complete Stage 3B output."""
+"""Merge SEC batch results from independent Stage 3B agents."""
 from __future__ import annotations
 
 import argparse
 import json
 import re
-import sys
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+
+try:
+    from asil_matrix import asil_from_sec, normalize_sec
+except ImportError:  # pragma: no cover
+    from .asil_matrix import asil_from_sec, normalize_sec
 
 
-def load_json(path: Path) -> dict | list:
+def load_json(path: Path) -> Any:
     """Load JSON file with UTF-8 encoding."""
     try:
         return json.loads(path.read_text(encoding="utf-8-sig"))
@@ -36,7 +42,7 @@ def normalize_record_keys(record: dict) -> dict:
     return normalized
 
 
-def get_field(record: dict, field: str) -> any:
+def get_field(record: dict[str, Any], field: str) -> Any:
     """获取字段值，尝试多种可能的键名变体。
 
     优先级：
@@ -67,43 +73,54 @@ def get_field(record: dict, field: str) -> any:
             if re.sub(r"\s+", "", key) == variant:
                 return record[key]
 
-    return None  # 未找到
+    return None
 
 
-def parse_asil_suffix(s_value: str, e_value: str, c_value: str) -> str:
-    """Calculate ASIL from S/E/C suffix values using sum rule.
+def load_batch_records(paths: list[str] | None) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for path in paths or []:
+        data = load_json(Path(path))
+        if not isinstance(data, list):
+            raise SystemExit(f"Expected JSON array in {path}")
+        for index, item in enumerate(data, start=1):
+            if not isinstance(item, dict):
+                raise SystemExit(f"Expected object at {path}[{index}]")
+            records.append(item)
+    return records
 
-    S: S0=0, S1=1, S2=2, S3=3
-    E: E0=0, E1=1, E2=2, E3=3, E4=4
-    C: C0=0, C1=1, C2=2, C3=3
 
-    Sum -> ASIL:
-    0-6: QM, 7: ASIL A, 8: ASIL B, 9: ASIL C, 10: ASIL D
-    """
-    s_match = re.search(r"S(\d+)", str(s_value).upper())
-    e_match = re.search(r"E(\d+)", str(e_value).upper())
-    c_match = re.search(r"C(\d+)", str(c_value).upper())
+def sort_key(value: Any) -> tuple[int, Any]:
+    try:
+        return (0, int(str(value).strip()))
+    except (TypeError, ValueError):
+        return (1, str(value))
 
-    if not all([s_match, e_match, c_match]):
-        return "QM"
 
-    s_score = int(s_match.group(1))
-    e_score = int(e_match.group(1))
-    c_score = int(c_match.group(1))
+def index_records(records: list[dict[str, Any]], prefix: str) -> dict[Any, dict[str, Any]]:
+    indexed: dict[Any, dict[str, Any]] = {}
+    seen: dict[str, int] = {}
+    for index, record in enumerate(records, start=1):
+        list_no = get_field(record, "List_No")
+        if list_no is None or str(list_no).strip() == "":
+            key = f"__missing_{prefix}_{index}"
+        else:
+            normalized_key = str(list_no).strip()
+            seen[normalized_key] = seen.get(normalized_key, 0) + 1
+            key = list_no if seen[normalized_key] == 1 else f"{normalized_key}__duplicate_{prefix}_{seen[normalized_key]}"
+        indexed[key] = record
+    return indexed
 
-    total = s_score + e_score + c_score
 
-    if total <= 6:
-        return "QM"
-    elif total == 7:
-        return "ASIL A"
-    elif total == 8:
-        return "ASIL B"
-    elif total == 9:
-        return "ASIL C"
-    elif total >= 10:
-        return "ASIL D"
-    return "QM"
+def asil_display(s_value: Any, e_value: Any, c_value: Any) -> str:
+    s_level = normalize_sec(s_value, "S")
+    e_level = normalize_sec(e_value, "E")
+    c_level = normalize_sec(c_value, "C")
+    asil = asil_from_sec(s_value, e_value, c_value)
+    if not (s_level and e_level and c_level and asil):
+        return ""
+    total = int(s_level[1:]) + int(e_level[1:]) + int(c_level[1:])
+    asil_text = "QM" if asil == "QM" else f"ASIL {asil}"
+    return f"{asil_text} ({s_level}+{e_level}+{c_level}={total})"
 
 
 def merge_sec_records(
@@ -111,25 +128,28 @@ def merge_sec_records(
     e_records: list,
     c_records: list,
 ) -> list:
-    """Merge S/E/C records by List_No and calculate ASIL."""
-    s_by_no = {rec["List_No"]: rec for rec in s_records}
-    e_by_no = {rec["List_No"]: rec for rec in e_records}
-    c_by_no = {rec["List_No"]: rec for rec in c_records}
+    """Merge S/E/C records by List_No without semantic validation."""
+    s_by_no = index_records(s_records, "s")
+    e_by_no = index_records(e_records, "e")
+    c_by_no = index_records(c_records, "c")
 
     all_list_nos = set(s_by_no.keys()) | set(e_by_no.keys()) | set(c_by_no.keys())
 
     merged = []
-    for list_no in sorted(all_list_nos):
+    for list_no in sorted(all_list_nos, key=sort_key):
         s_rec = s_by_no.get(list_no, {})
         e_rec = e_by_no.get(list_no, {})
         c_rec = c_by_no.get(list_no, {})
 
-        s_value = s_rec.get("Severity 'S'", "S0")
-        e_value = e_rec.get("暴露频率'E'", "E0")
-        c_value = c_rec.get("控制能力 'C'", "C0")
-
-        asil = parse_asil_suffix(s_value, e_value, c_value)
-        asil_display = f"{asil} ({s_value}+{e_value}+{c_value}={s_value[1]}{e_value[1]}{c_value[1]})"
+        output_list_no = (
+            get_field(s_rec, "List_No")
+            or get_field(e_rec, "List_No")
+            or get_field(c_rec, "List_No")
+            or list_no
+        )
+        s_value = get_field(s_rec, "Severity 'S'") or ""
+        e_value = get_field(e_rec, "暴露频率'E'") or ""
+        c_value = get_field(c_rec, "控制能力 'C'") or ""
 
         # 使用 get_field 处理字段名中的多余空格
         sec_reasoning = {
@@ -138,24 +158,16 @@ def merge_sec_records(
             "C评级推理": get_field(c_rec, "C评级推理") or {},
         }
 
-        # 合并时优先使用非空值，允许 S/E/C 都输出相同字段
-        # S 评级输出：List_No, 有风险的人员, 可能的后果('S'的理由), Severity 'S', S评级推理
-        # E 评级输出：List_No, E-解释, 暴露频率'E', 有风险的人员, E评级推理
-        # C 评级输出：List_No, C-解释, 控制能力 'C', C评级推理
-
-        # 获取有风险的人员（优先从 S，其次从 E），使用 get_field 处理空格
-        at_risk_persons = get_field(s_rec, "有风险的人员") or get_field(e_rec, "有风险的人员") or ""
-
         merged.append({
-            "List_No": list_no,
+            "List_No": output_list_no,
             "E-解释": get_field(e_rec, "E-解释") or "",
             "暴露频率'E'": e_value,
-            "有风险的人员": at_risk_persons,
+            "有风险的人员": get_field(s_rec, "有风险的人员") or "",
             "可能的后果('S'的理由)": get_field(s_rec, "可能的后果('S'的理由)") or "",
             "Severity 'S'": s_value,
             "C-解释": get_field(c_rec, "C-解释") or "",
             "控制能力 'C'": c_value,
-            "结果ASIL": asil_display,
+            "结果ASIL": asil_display(s_value, e_value, c_value),
             "sec_reasoning": sec_reasoning,
         })
 
@@ -186,17 +198,9 @@ def main() -> int:
                         help="Delete input batch files after successful merge")
     args = parser.parse_args()
 
-    # Load S/E/C batch files
-    all_s_records = []
-    all_e_records = []
-    all_c_records = []
-
-    for s_path in args.s_batches or []:
-        all_s_records.extend(load_json(Path(s_path)))
-    for e_path in args.e_batches or []:
-        all_e_records.extend(load_json(Path(e_path)))
-    for c_path in args.c_batches or []:
-        all_c_records.extend(load_json(Path(c_path)))
+    all_s_records = load_batch_records(args.s_batches)
+    all_e_records = load_batch_records(args.e_batches)
+    all_c_records = load_batch_records(args.c_batches)
 
     # Merge SEC records
     sec_records = merge_sec_records(all_s_records, all_e_records, all_c_records)
@@ -207,8 +211,11 @@ def main() -> int:
             "run_id": args.meta_run_id,
             "mf_id": args.meta_mf_id,
             "stage": "stage3b",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
         },
         "sec_records": sec_records,
+        "safety_goal": "",
+        "safe_state": "",
     }
 
     # Merge safety_goal and safe_state
@@ -218,13 +225,11 @@ def main() -> int:
         output_data["safe_state"] = safety_data.get("safe_state", "")
 
     # Merge FTTI (支持批次文件或单个文件)
-    all_ftti_records = []
+    all_ftti_records: list[dict[str, Any]] = []
     if args.ftti_batches:
-        for ftti_path in args.ftti_batches:
-            all_ftti_records.extend(load_json(Path(ftti_path)))
+        all_ftti_records.extend(load_batch_records(args.ftti_batches))
     elif args.ftti:
-        # 向后兼容：单个 FTTI 文件
-        all_ftti_records.extend(load_json(Path(args.ftti)))
+        all_ftti_records.extend(load_batch_records([args.ftti]))
 
     if all_ftti_records:
         ftti_by_no = {rec["List_No"]: rec for rec in all_ftti_records}

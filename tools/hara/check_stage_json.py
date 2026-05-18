@@ -5,15 +5,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 try:
     from hara_schema_columns import DERIVE_MF_COLUMNS, MF_VEHICLE_HAZARDS_COLUMNS, HARA_COLUMNS, SG_SUM_COLUMNS, get_by_alias, is_nan_like, normalize_rows
-    from asil_matrix import ASIL_ORDER, normalize_asil
+    from asil_matrix import ASIL_ORDER, asil_from_sec, normalize_asil, normalize_sec
 except ImportError:  # pragma: no cover
     from .hara_schema_columns import DERIVE_MF_COLUMNS, MF_VEHICLE_HAZARDS_COLUMNS, HARA_COLUMNS, SG_SUM_COLUMNS, get_by_alias, is_nan_like, normalize_rows
-    from .asil_matrix import ASIL_ORDER, normalize_asil
+    from .asil_matrix import ASIL_ORDER, asil_from_sec, normalize_asil, normalize_sec
 
 STAGE1_GUIDE_COLUMNS = ["功能丧失", "过大", "过早", "过小", "过晚", "非预期激活", "卡滞", "方向错误"]
 STAGE1_TOP_LEVEL_KEYS = {"meta", "derive_mf", "review_log", "knowledge_evidence", "field_reasoning"}
@@ -21,23 +22,6 @@ STAGE1_REASONING_FIELDS = ["功能输出", "异常情况", "后果", "是否有�
 STAGE1_MERGED_FAULT_FIELDS = ["过大/过早", "过小/过晚"]
 STAGE1_MULTI_EFFECT_MARKERS = ["或", "以及", "同时", "；", ";"]
 STAGE2_TRACE_COLUMNS = ["Function_ID", "source_function_name", "Stage1_Row", "Fault_Field", "Stage1_Fault_Text"]
-STAGE3_REVIEW_COLUMNS = [
-    "List_No",
-    "MF_ID",
-    "result",
-    "scenario_reality",
-    "scenario_independence",
-    "internal_consistency",
-    "operational_domain_consistency",
-    "max_asil_search_coverage",
-    "motion_logic",
-    "hazard_event_logic",
-    "sec_reasoning",
-    "safety_goal_consistency",
-    "issues",
-    "fixes",
-    "notes",
-]
 STAGE3_ENUM_FIELDS = HARA_COLUMNS[4:10]
 
 # Stage 3A scenarios columns (场景字段 + 危害事件 + scenario_reasoning)
@@ -60,6 +44,18 @@ SCENARIOS_COLUMNS = [
 
 # Stage 3A/B scenario enum fields (same as Stage 3)
 STAGE3A_ENUM_FIELDS = SCENARIOS_COLUMNS[4:10]  # 道路类型 to 特殊要素
+STAGE3A_TOP_LEVEL_KEYS = {"meta", "max_asil_planning", "scenarios", "review_log"}
+STAGE3A_PLANNING_FIELDS = ["高风险因素分析", "规划的场景原型", "预期最大_ASIL", "规划理由"]
+STAGE3A_REASONING_FIELDS = ["场景规划理由", "危害事件推理", "场景条件相关性检查"]
+STAGE3A_CONDITION_FIELDS = ["道路类型", "道路条件", "环境条件", "车辆状态", "车速", "特殊要素"]
+STAGE3A_CONDITION_TO_SCENARIO_FIELD = {
+    "道路类型": "道路类型",
+    "道路条件": "道路条件",
+    "环境条件": "环境条件",
+    "车辆状态": "车辆状态",
+    "车速": "车速(km/h)",
+    "特殊要素": "特殊要素",
+}
 
 # Stage 3B SEC records columns (本阶段生成的 SEC 评级字段)
 SEC_RECORDS_COLUMNS = [
@@ -76,6 +72,30 @@ SEC_RECORDS_COLUMNS = [
     "FTTI(ms)",  # 可选
     "备注",  # 可选
 ]
+STAGE3B_TOP_LEVEL_KEYS = {"meta", "sec_records", "safety_goal", "safe_state"}
+STAGE3B_REQUIRED_FIELDS = [
+    "List_No",
+    "E-解释",
+    "暴露频率'E'",
+    "有风险的人员",
+    "可能的后果('S'的理由)",
+    "Severity 'S'",
+    "C-解释",
+    "控制能力 'C'",
+    "结果ASIL",
+    "sec_reasoning",
+]
+STAGE3B_REASONING_REQUIRED_FIELDS = {
+    "S评级推理": ["伤害分析", "碰撞对象", "碰撞速度", "参考规则", "S等级", "S理由"],
+    "E评级推理": ["场景持续时间", "场景发生频率", "参考规则", "E等级", "E理由"],
+    "C评级推理": ["感知来源", "反应时间", "可用操作", "空间约束", "参考规则", "C等级", "C理由"],
+}
+STAGE3B_LEVEL_FIELDS = [
+    ("Severity 'S'", "S评级推理", "S等级", "S"),
+    ("暴露频率'E'", "E评级推理", "E等级", "E"),
+    ("控制能力 'C'", "C评级推理", "C等级", "C"),
+]
+STAGE3B_FORBIDDEN_RECORD_FIELDS = set(SCENARIOS_COLUMNS) - {"List_No"}
 
 
 def load_json(path: Path) -> Any:
@@ -750,11 +770,162 @@ def check_stage3_operation_scenarios(data: Any, operation_scenarios: Any | None,
                 })
 
 
-def check_stage3a(data: Any, min_scenarios: int, max_scenarios: int, mf_id: str | None, errors: list[dict[str, Any]]) -> None:
+def stage2_mf_lookup(stage2: Any | None) -> dict[str, dict[str, Any]]:
+    if stage2 is None:
+        return {}
+    return {
+        str(get_by_alias(row, "Milf_ID") or "").strip(): row
+        for row in rows(stage2, "mf_vehicle_hazards")
+        if str(get_by_alias(row, "Milf_ID") or "").strip()
+    }
+
+
+def condition_is_not_applicable(value: Any) -> bool:
+    return str(value or "").strip().startswith("不涉及")
+
+
+def condition_is_related(value: Any) -> bool:
+    return str(value or "").strip().startswith("相关")
+
+
+def check_stage3a_top_level(data: dict[str, Any], errors: list[dict[str, Any]]) -> None:
+    extra = sorted(key for key in data.keys() if key not in STAGE3A_TOP_LEVEL_KEYS)
+    missing = sorted(key for key in STAGE3A_TOP_LEVEL_KEYS if key not in data)
+    if extra:
+        errors.append({"stage": "stage3a", "error": "unexpected_top_level_keys", "keys": extra})
+    if missing:
+        errors.append({"stage": "stage3a", "error": "missing_top_level_keys", "keys": missing})
+
+
+def check_stage3a_meta(data: dict[str, Any], mf_id: str | None, errors: list[dict[str, Any]]) -> None:
+    meta = data.get("meta")
+    if not isinstance(meta, dict):
+        errors.append({"stage": "stage3a", "error": "meta_must_be_object"})
+        return
+    if str(meta.get("stage") or "").strip() != "stage3a":
+        errors.append({
+            "stage": "stage3a",
+            "error": "meta_stage_must_be_stage3a",
+            "actual": meta.get("stage"),
+        })
+    meta_mf_id = str(meta.get("mf_id") or meta.get("MF_ID") or "").strip()
+    if not meta_mf_id:
+        errors.append({"stage": "stage3a", "error": "meta_mf_id_required"})
+    elif mf_id and meta_mf_id != mf_id:
+        errors.append({
+            "stage": "stage3a",
+            "error": "mf_id_mismatch_with_meta",
+            "expected": mf_id,
+            "actual": meta_mf_id,
+        })
+
+
+def stage3a_effective_mf_id(data: dict[str, Any], mf_id: str | None) -> str | None:
+    if mf_id:
+        return mf_id
+    meta = data.get("meta")
+    if not isinstance(meta, dict):
+        return None
+    meta_mf_id = str(meta.get("mf_id") or meta.get("MF_ID") or "").strip()
+    return meta_mf_id or None
+
+
+def check_stage3a_against_stage2(
+    scenarios: list[dict[str, Any]],
+    stage2: Any | None,
+    mf_id: str | None,
+    errors: list[dict[str, Any]],
+) -> None:
+    if stage2 is None or not mf_id:
+        return
+    expected = stage2_mf_lookup(stage2).get(mf_id)
+    if expected is None:
+        errors.append({"stage": "stage3a", "error": "mf_id_not_found_in_stage2", "MF_ID": mf_id})
+        return
+    expected_fault = str(get_by_alias(expected, "故障描述") or "").strip()
+    expected_hazard = str(get_by_alias(expected, "整车级危害") or "").strip()
+    for index, row in enumerate(scenarios, start=1):
+        actual_fault = str(get_by_alias(row, "故障描述") or "").strip()
+        actual_hazard = str(get_by_alias(row, "整车危害") or "").strip()
+        if expected_fault and actual_fault != expected_fault:
+            errors.append({
+                "stage": "stage3a",
+                "row": index,
+                "error": "fault_description_not_verbatim_from_stage2",
+                "MF_ID": mf_id,
+                "expected": expected_fault,
+                "actual": actual_fault,
+            })
+        if expected_hazard and actual_hazard != expected_hazard:
+            errors.append({
+                "stage": "stage3a",
+                "row": index,
+                "error": "vehicle_hazard_not_from_stage2",
+                "MF_ID": mf_id,
+                "expected": expected_hazard,
+                "actual": actual_hazard,
+            })
+
+
+def check_stage3a_condition_consistency(
+    scenarios: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> None:
+    for index, row in enumerate(scenarios, start=1):
+        reasoning = row.get("scenario_reasoning")
+        if not isinstance(reasoning, dict):
+            continue
+        conditions = reasoning.get("场景条件相关性检查")
+        if not isinstance(conditions, dict):
+            continue
+        for condition_field, scenario_field in STAGE3A_CONDITION_TO_SCENARIO_FIELD.items():
+            reasoning_text = str(conditions.get(condition_field, "")).strip()
+            if not reasoning_text:
+                continue
+            scenario_value = str(get_by_alias(row, scenario_field) or "").strip()
+            if not (condition_is_not_applicable(reasoning_text) or condition_is_related(reasoning_text)):
+                errors.append({
+                    "stage": "stage3a",
+                    "row": index,
+                    "error": "condition_relevance_must_start_with_related_or_not_applicable",
+                    "field": condition_field,
+                    "actual": reasoning_text,
+                })
+            if condition_is_not_applicable(reasoning_text) and scenario_value != "不涉及":
+                errors.append({
+                    "stage": "stage3a",
+                    "row": index,
+                    "error": "condition_marked_not_applicable_but_field_not_fixed",
+                    "field": scenario_field,
+                    "actual": scenario_value,
+                    "message": "该字段推理标记为不涉及，运行 --fix 可将场景字段规范化为 不涉及。",
+                })
+            if scenario_value == "不涉及" and not condition_is_not_applicable(reasoning_text):
+                errors.append({
+                    "stage": "stage3a",
+                    "row": index,
+                    "error": "field_not_applicable_but_reasoning_not_marked",
+                    "field": scenario_field,
+                    "reasoning_field": condition_field,
+                    "actual_reasoning": reasoning_text,
+                })
+
+
+def check_stage3a(
+    data: Any,
+    min_scenarios: int,
+    max_scenarios: int,
+    mf_id: str | None,
+    errors: list[dict[str, Any]],
+    stage2: Any | None = None,
+) -> None:
     """Validate Stage 3A scenarios JSON."""
     if not isinstance(data, dict):
         errors.append({"stage": "stage3a", "error": "top_level_must_be_object"})
         return
+    check_stage3a_top_level(data, errors)
+    check_stage3a_meta(data, mf_id, errors)
+    effective_mf_id = stage3a_effective_mf_id(data, mf_id)
 
     scenarios = rows(data, "scenarios")
     if len(scenarios) < min_scenarios or len(scenarios) > max_scenarios:
@@ -768,7 +939,6 @@ def check_stage3a(data: Any, min_scenarios: int, max_scenarios: int, mf_id: str 
 
     check_required(scenarios, SCENARIOS_COLUMNS, "stage3a", errors)
 
-    # Check max_asil_planning exists and is valid
     if "max_asil_planning" not in data:
         errors.append({"stage": "stage3a", "error": "max_asil_planning_missing"})
     else:
@@ -776,27 +946,57 @@ def check_stage3a(data: Any, min_scenarios: int, max_scenarios: int, mf_id: str 
         if not isinstance(planning, dict):
             errors.append({"stage": "stage3a", "error": "max_asil_planning_must_be_object"})
         else:
-            for field in ["高风险因素分析", "规划的场景原型", "预期最大_ASIL", "规划理由"]:
+            for field in STAGE3A_PLANNING_FIELDS:
+                value = planning.get(field)
                 if field not in planning:
                     errors.append({
                         "stage": "stage3a",
                         "error": "max_asil_planning_missing_field",
                         "field": field,
                     })
+                elif isinstance(value, list) and not value:
+                    errors.append({
+                        "stage": "stage3a",
+                        "error": "max_asil_planning_field_must_not_be_empty",
+                        "field": field,
+                    })
+                elif not isinstance(value, list) and not str(value or "").strip():
+                    errors.append({
+                        "stage": "stage3a",
+                        "error": "max_asil_planning_field_must_not_be_blank",
+                        "field": field,
+                    })
 
-    # Check MF_ID consistency
-    if mf_id:
-        other = sorted({str(row.get("MF_ID", "")).strip() for row in scenarios if str(row.get("MF_ID", "")).strip() != mf_id})
+    if effective_mf_id:
+        other = sorted({str(row.get("MF_ID", "")).strip() for row in scenarios if str(row.get("MF_ID", "")).strip() != effective_mf_id})
         if other:
             errors.append({
                 "stage": "stage3a",
                 "error": "mixed_mf_id",
-                "expected": mf_id,
+                "expected": effective_mf_id,
                 "found_other_mf_ids": other,
             })
 
-    # Check scenario_reasoning structure
     for index, row in enumerate(scenarios, start=1):
+        list_no = parse_positive_int(get_by_alias(row, "List_No"))
+        if list_no != index:
+            errors.append({
+                "stage": "stage3a",
+                "row": index,
+                "error": "list_no_must_be_consecutive",
+                "expected": index,
+                "actual": get_by_alias(row, "List_No"),
+            })
+
+        driver_present = str(get_by_alias(row, "驾驶员是否在车上") or "").strip()
+        if driver_present and driver_present not in {"是", "否", "不涉及"}:
+            errors.append({
+                "stage": "stage3a",
+                "row": index,
+                "error": "driver_present_must_be_yes_no_or_not_applicable",
+                "actual": driver_present,
+            })
+
         reasoning = row.get("scenario_reasoning")
         if not reasoning or not isinstance(reasoning, dict):
             errors.append({
@@ -805,15 +1005,14 @@ def check_stage3a(data: Any, min_scenarios: int, max_scenarios: int, mf_id: str 
                 "error": "scenario_reasoning_missing_or_not_object",
             })
             continue
-        for field in ["场景规划理由", "危害事件推理", "场景条件相关性检查"]:
-            if field not in reasoning:
+        for field in STAGE3A_REASONING_FIELDS:
+            if field not in reasoning or (field != "场景条件相关性检查" and not str(reasoning.get(field) or "").strip()):
                 errors.append({
                     "stage": "stage3a",
                     "row": index,
                     "error": "scenario_reasoning_missing_field",
                     "field": field,
                 })
-        # Check 场景条件相关性检查 is an object with 6 condition fields
         conditions = reasoning.get("场景条件相关性检查")
         if not conditions or not isinstance(conditions, dict):
             errors.append({
@@ -822,14 +1021,15 @@ def check_stage3a(data: Any, min_scenarios: int, max_scenarios: int, mf_id: str 
                 "error": "场景条件相关性检查_missing_or_not_object",
             })
         else:
-            for field in ["道路类型", "道路条件", "环境条件", "车辆状态", "车速", "特殊要素"]:
-                if field not in conditions:
+            for field in STAGE3A_CONDITION_FIELDS:
+                if field not in conditions or not str(conditions.get(field) or "").strip():
                     errors.append({
                         "stage": "stage3a",
                         "row": index,
                         "error": "场景条件相关性检查_missing_field",
                         "field": field,
                     })
+    check_stage3a_against_stage2(scenarios, stage2, effective_mf_id, errors)
 
 
 def check_stage3a_operation_scenarios(data: Any, operation_scenarios: Any | None, errors: list[dict[str, Any]]) -> None:
@@ -905,9 +1105,6 @@ def check_stage3a_operation_scenarios(data: Any, operation_scenarios: Any | None
                     "allowed_values": sorted(list(allowed_set)),
                     "allowed_source": "operation_scenarios.json",
                 })
-
-
-import re
 
 
 def normalize_scenario_value(value: str) -> tuple[str, list[str]]:
@@ -1007,14 +1204,13 @@ def apply_scenario_enum_format_fixes(data: Any, operation_scenarios: Any | None)
     return fixes
 
 
-def apply_scenario_condition_corrections(data: Any, errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def apply_scenario_condition_corrections(data: Any) -> list[dict[str, Any]]:
     """根据 scenario_reasoning 自动修改原字段值为 '不涉及'。
 
     如果场景条件相关性检查中记录了"不涉及"，自动将原字段值修改为"不涉及"。
     """
     scenarios = rows(data, "scenarios")
     fixes: list[dict[str, Any]] = []
-    condition_fields = ["道路类型", "道路条件", "环境条件", "车辆状态", "车速(km/h)", "特殊要素"]
 
     for index, row in enumerate(scenarios, start=1):
         reasoning = row.get("scenario_reasoning")
@@ -1024,18 +1220,19 @@ def apply_scenario_condition_corrections(data: Any, errors: list[dict[str, Any]]
         if not conditions or not isinstance(conditions, dict):
             continue
 
-        for field in condition_fields:
-            reasoning_text = conditions.get(field, "")
+        for condition_field, scenario_field in STAGE3A_CONDITION_TO_SCENARIO_FIELD.items():
+            reasoning_text = conditions.get(condition_field, "")
             # 检查推理中是否标记为"不涉及"
-            if "不涉及" in str(reasoning_text):
-                current_value = str(row.get(field, "")).strip()
+            if condition_is_not_applicable(reasoning_text):
+                current_value = str(get_by_alias(row, scenario_field) or "").strip()
                 if current_value and current_value != "不涉及":
                     # 修改原字段值
-                    row[field] = "不涉及"
+                    row[scenario_field] = "不涉及"
                     fixes.append({
                         "stage": "stage3a",
                         "row": index,
-                        "field": field,
+                        "field": scenario_field,
+                        "reasoning_field": condition_field,
                         "action": "auto_set_to_not_applicable",
                         "old_value": current_value,
                         "new_value": "不涉及",
@@ -1045,149 +1242,379 @@ def apply_scenario_condition_corrections(data: Any, errors: list[dict[str, Any]]
     return fixes
 
 
-def check_stage3b_raw(data: Any, min_scenarios: int, max_scenarios: int, mf_id: str | None, errors: list[dict[str, Any]]) -> None:
-    """Validate Stage 3B raw output (sec_records format).
+def is_blankish(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        text = value.strip()
+        return text == "" or is_nan_like(text)
+    return False
 
-    Stage 3B 原始输出格式：
-    {
-      "meta": {...},
-      "sec_records": [
-        {
-          "List_No": 1,
-          "E-解释": "...",
-          "暴露频率'E'": "E3",
-          "有风险的人员": "...",
-          "可能的后果('S'的理由)": "...",
-          "Severity 'S'": "S1",
-          "C-解释": "...",
-          "控制能力 'C'": "C2",
-          "结果ASIL": "QM (S1+E3+C2=6)",
-          "sec_reasoning": {
-            "S评级推理": {...},
-            "E评级推理": {...},
-            "C评级推理": {...}
-          },
-          "FTTI(ms)": "...",  // 可选
-          "备注": "..."  // 可选
-        }
-      ],
-      "safety_goal": "...",
-      "safe_state": "..."
-    }
-    """
-    if not isinstance(data, dict):
-        errors.append({"stage": "stage3b_raw", "error": "top_level_must_be_object"})
+
+def stage3b_effective_mf_id(data: dict[str, Any], mf_id: str | None) -> str | None:
+    if mf_id:
+        return mf_id
+    meta = data.get("meta")
+    if not isinstance(meta, dict):
+        return None
+    meta_mf_id = str(meta.get("mf_id") or meta.get("MF_ID") or "").strip()
+    return meta_mf_id or None
+
+
+def check_stage3b_top_level(data: dict[str, Any], errors: list[dict[str, Any]]) -> None:
+    extra = sorted(key for key in data.keys() if key not in STAGE3B_TOP_LEVEL_KEYS)
+    missing = sorted(key for key in STAGE3B_TOP_LEVEL_KEYS if key not in data)
+    if extra:
+        errors.append({"stage": "stage3b", "error": "unexpected_top_level_keys", "keys": extra})
+    if missing:
+        errors.append({"stage": "stage3b", "error": "missing_top_level_keys", "keys": missing})
+
+
+def sec_formula_fragment(s_level: str, e_level: str, c_level: str) -> str:
+    total = int(s_level[1:]) + int(e_level[1:]) + int(c_level[1:])
+    return f"{s_level}+{e_level}+{c_level}={total}"
+
+
+def ftti_is_numeric(value: Any) -> bool:
+    text = str(value).strip()
+    if text == "":
+        return False
+    try:
+        return float(text) >= 0
+    except ValueError:
+        return False
+
+
+def check_stage3b_against_stage3a(
+    sec_records: list[dict[str, Any]],
+    stage3a: Any | None,
+    mf_id: str | None,
+    errors: list[dict[str, Any]],
+) -> None:
+    if stage3a is None:
         return
+    if not isinstance(stage3a, dict):
+        errors.append({"stage": "stage3b", "error": "stage3a_must_be_object"})
+        return
+    scenarios = rows(stage3a, "scenarios")
+    expected_list_nos = [parse_positive_int(get_by_alias(row, "List_No")) for row in scenarios]
+    actual_list_nos = [parse_positive_int(get_by_alias(row, "List_No")) for row in sec_records]
+    if len(sec_records) != len(scenarios):
+        errors.append({
+            "stage": "stage3b",
+            "error": "sec_record_count_mismatch_with_stage3a",
+            "expected_from_stage3a": len(scenarios),
+            "actual": len(sec_records),
+        })
+    if actual_list_nos != expected_list_nos:
+        errors.append({
+            "stage": "stage3b",
+            "error": "list_no_mismatch_with_stage3a",
+            "expected_from_stage3a": expected_list_nos,
+            "actual": actual_list_nos,
+        })
+    stage3a_mf_id = stage3a_effective_mf_id(stage3a, None)
+    if mf_id and stage3a_mf_id and mf_id != stage3a_mf_id:
+        errors.append({
+            "stage": "stage3b",
+            "error": "mf_id_mismatch_with_stage3a",
+            "expected": stage3a_mf_id,
+            "actual": mf_id,
+        })
 
-    # Check meta exists
+
+def check_stage3b_sec(
+    data: Any,
+    min_scenarios: int,
+    max_scenarios: int,
+    mf_id: str | None,
+    errors: list[dict[str, Any]],
+    stage3a: Any | None = None,
+) -> None:
+    """Validate Stage 3B SEC output (sec_records format)."""
+    if not isinstance(data, dict):
+        errors.append({"stage": "stage3b", "error": "top_level_must_be_object"})
+        return
+    check_stage3b_top_level(data, errors)
+    effective_mf_id = stage3b_effective_mf_id(data, mf_id)
+
     if "meta" not in data:
-        errors.append({"stage": "stage3b_raw", "error": "meta_missing"})
+        errors.append({"stage": "stage3b", "error": "meta_missing"})
     else:
         meta = data.get("meta")
         if not isinstance(meta, dict):
-            errors.append({"stage": "stage3b_raw", "error": "meta_must_be_object"})
+            errors.append({"stage": "stage3b", "error": "meta_must_be_object"})
         else:
             for field in ["run_id", "mf_id", "stage"]:
-                if field not in meta:
+                if field not in meta or is_blankish(meta.get(field)):
                     errors.append({
-                        "stage": "stage3b_raw",
+                        "stage": "stage3b",
                         "error": "meta_missing_field",
                         "field": field,
                     })
+            if str(meta.get("stage") or "").strip() != "stage3b":
+                errors.append({
+                    "stage": "stage3b",
+                    "error": "meta_stage_must_be_stage3b",
+                    "actual": meta.get("stage"),
+                })
+            meta_mf_id = str(meta.get("mf_id") or meta.get("MF_ID") or "").strip()
+            if mf_id and meta_mf_id and mf_id != meta_mf_id:
+                errors.append({
+                    "stage": "stage3b",
+                    "error": "mf_id_mismatch",
+                    "expected": mf_id,
+                    "actual": meta_mf_id,
+                })
 
-    # Check sec_records exists and is an array
     if "sec_records" not in data:
-        errors.append({"stage": "stage3b_raw", "error": "sec_records_missing"})
+        errors.append({"stage": "stage3b", "error": "sec_records_missing"})
         return
 
     sec_records = data.get("sec_records")
     if not isinstance(sec_records, list):
-        errors.append({"stage": "stage3b_raw", "error": "sec_records_must_be_array"})
+        errors.append({"stage": "stage3b", "error": "sec_records_must_be_array"})
         return
 
     # Check scenario count
     if len(sec_records) < min_scenarios or len(sec_records) > max_scenarios:
         errors.append({
-            "stage": "stage3b_raw",
+            "stage": "stage3b",
             "error": "sec_records_count_out_of_range",
             "min": min_scenarios,
             "max": max_scenarios,
             "actual": len(sec_records),
         })
 
-    # Check each sec_record has required fields
-    required_fields = ["List_No", "E-解释", "暴露频率'E'", "有风险的人员", "可能的后果('S'的理由)",
-                       "Severity 'S'", "C-解释", "控制能力 'C'", "结果ASIL", "sec_reasoning"]
+    seen_list_nos: set[int] = set()
     for index, record in enumerate(sec_records, start=1):
         if not isinstance(record, dict):
             errors.append({
-                "stage": "stage3b_raw",
+                "stage": "stage3b",
                 "row": index,
                 "error": "sec_record_must_be_object",
             })
             continue
 
-        # Check required fields
-        missing = [field for field in required_fields if field not in record]
+        forbidden_fields = sorted(field for field in STAGE3B_FORBIDDEN_RECORD_FIELDS if field in record)
+        if forbidden_fields:
+            errors.append({
+                "stage": "stage3b",
+                "row": index,
+                "error": "stage3a_fields_must_not_be_repeated_in_stage3b",
+                "fields": forbidden_fields,
+            })
+
+        list_no = parse_positive_int(get_by_alias(record, "List_No"))
+        if list_no is None:
+            errors.append({
+                "stage": "stage3b",
+                "row": index,
+                "error": "list_no_must_be_positive_integer",
+                "actual": get_by_alias(record, "List_No"),
+            })
+        else:
+            if list_no in seen_list_nos:
+                errors.append({
+                    "stage": "stage3b",
+                    "row": index,
+                    "error": "duplicate_list_no",
+                    "List_No": list_no,
+                })
+            seen_list_nos.add(list_no)
+            if stage3a is None and list_no != index:
+                errors.append({
+                    "stage": "stage3b",
+                    "row": index,
+                    "error": "list_no_must_be_consecutive",
+                    "expected": index,
+                    "actual": get_by_alias(record, "List_No"),
+                })
+
+        missing = [field for field in STAGE3B_REQUIRED_FIELDS if field not in record]
         if missing:
             errors.append({
-                "stage": "stage3b_raw",
+                "stage": "stage3b",
                 "row": index,
                 "error": "sec_record_missing_required_fields",
                 "fields": missing,
             })
 
-        # Check sec_reasoning structure
+        blank_fields = [
+            field
+            for field in STAGE3B_REQUIRED_FIELDS
+            if field in record and field != "sec_reasoning" and is_blankish(record.get(field))
+        ]
+        if blank_fields:
+            errors.append({
+                "stage": "stage3b",
+                "row": index,
+                "error": "sec_record_required_fields_must_not_be_blank",
+                "fields": blank_fields,
+            })
+
         sec_reasoning = record.get("sec_reasoning")
         if not sec_reasoning or not isinstance(sec_reasoning, dict):
             errors.append({
-                "stage": "stage3b_raw",
+                "stage": "stage3b",
                 "row": index,
                 "error": "sec_reasoning_missing_or_not_object",
             })
             continue
 
-        for rating_type in ["S评级推理", "E评级推理", "C评级推理"]:
-            if rating_type not in sec_reasoning:
+        for rating_type, required_reasoning_fields in STAGE3B_REASONING_REQUIRED_FIELDS.items():
+            rating_reasoning = sec_reasoning.get(rating_type)
+            if not isinstance(rating_reasoning, dict):
                 errors.append({
-                    "stage": "stage3b_raw",
+                    "stage": "stage3b",
                     "row": index,
-                    "error": "sec_reasoning_missing_rating",
+                    "error": "sec_reasoning_missing_rating_object",
                     "rating_type": rating_type,
                 })
+                continue
+            missing_reasoning = [
+                field
+                for field in required_reasoning_fields
+                if field not in rating_reasoning or is_blankish(rating_reasoning.get(field))
+            ]
+            if missing_reasoning:
+                errors.append({
+                    "stage": "stage3b",
+                    "row": index,
+                    "error": "sec_reasoning_missing_required_fields",
+                    "rating_type": rating_type,
+                    "fields": missing_reasoning,
+                })
 
-    # Check MF_ID consistency
-    if mf_id:
-        meta_mf_id = data.get("meta", {}).get("mf_id", "")
-        if meta_mf_id != mf_id:
+        normalized_levels: dict[str, str] = {}
+        for record_field, rating_type, reasoning_field, prefix in STAGE3B_LEVEL_FIELDS:
+            record_level = normalize_sec(record.get(record_field), prefix)
+            normalized_levels[prefix] = record_level or ""
+            if record_level is None:
+                errors.append({
+                    "stage": "stage3b",
+                    "row": index,
+                    "error": "invalid_sec_level",
+                    "field": record_field,
+                    "actual": record.get(record_field),
+                })
+            rating_reasoning = sec_reasoning.get(rating_type)
+            if not isinstance(rating_reasoning, dict):
+                continue
+            reasoning_level = normalize_sec(rating_reasoning.get(reasoning_field), prefix)
+            if reasoning_level is None:
+                errors.append({
+                    "stage": "stage3b",
+                    "row": index,
+                    "error": "invalid_reasoning_sec_level",
+                    "rating_type": rating_type,
+                    "field": reasoning_field,
+                    "actual": rating_reasoning.get(reasoning_field),
+                })
+            elif record_level is not None and reasoning_level != record_level:
+                errors.append({
+                    "stage": "stage3b",
+                    "row": index,
+                    "error": "sec_level_mismatch_with_reasoning",
+                    "field": record_field,
+                    "reasoning_field": f"{rating_type}.{reasoning_field}",
+                    "expected": record_level,
+                    "actual": reasoning_level,
+                })
+
+        expected_asil = asil_from_sec(
+            record.get("Severity 'S'"),
+            record.get("暴露频率'E'"),
+            record.get("控制能力 'C'"),
+        )
+        actual_asil = normalize_asil(record.get("结果ASIL"))
+        if expected_asil is None:
             errors.append({
-                "stage": "stage3b_raw",
-                "error": "mf_id_mismatch",
-                "expected": mf_id,
-                "actual": meta_mf_id,
+                "stage": "stage3b",
+                "row": index,
+                "error": "asil_cannot_be_calculated_from_sec",
+                "S": record.get("Severity 'S'"),
+                "E": record.get("暴露频率'E'"),
+                "C": record.get("控制能力 'C'"),
             })
-        # Check all sec_records have the same MF_ID (through List_No consistency with stage3a)
-        other = sorted({
-            str(record.get("MF_ID", "")).strip()
-            for record in sec_records
-            if isinstance(record, dict) and "MF_ID" in record
-        })
-        if other and mf_id not in other:
+        elif actual_asil != expected_asil:
             errors.append({
-                "stage": "stage3b_raw",
-                "error": "mixed_mf_id",
-                "expected": mf_id,
-                "found_other_mf_ids": other,
+                "stage": "stage3b",
+                "row": index,
+                "error": "asil_mismatch_with_sec",
+                "expected": expected_asil,
+                "actual": record.get("结果ASIL"),
+            })
+        if all(normalized_levels.values()):
+            expected_formula = sec_formula_fragment(
+                normalized_levels["S"],
+                normalized_levels["E"],
+                normalized_levels["C"],
+            )
+            actual_asil_text = re.sub(r"\s+", "", str(record.get("结果ASIL") or ""))
+            if expected_formula not in actual_asil_text:
+                errors.append({
+                    "stage": "stage3b",
+                    "row": index,
+                    "error": "asil_formula_mismatch_with_sec",
+                    "expected_fragment": expected_formula,
+                    "actual": record.get("结果ASIL"),
+                })
+
+        asil_for_ftti = actual_asil or expected_asil
+        ftti_value = record.get("FTTI(ms)")
+        ftti_reason = record.get("FTTI理由")
+        if asil_for_ftti and asil_for_ftti != "QM":
+            if is_blankish(ftti_value):
+                errors.append({
+                    "stage": "stage3b",
+                    "row": index,
+                    "error": "ftti_required_for_non_qm",
+                    "ASIL": asil_for_ftti,
+                })
+            elif not ftti_is_numeric(ftti_value):
+                errors.append({
+                    "stage": "stage3b",
+                    "row": index,
+                    "error": "ftti_must_be_numeric_ms",
+                    "actual": ftti_value,
+                })
+            if is_blankish(ftti_reason):
+                errors.append({
+                    "stage": "stage3b",
+                    "row": index,
+                    "error": "ftti_reason_required_for_non_qm",
+                })
+        elif not is_blankish(ftti_value):
+            if not ftti_is_numeric(ftti_value):
+                errors.append({
+                    "stage": "stage3b",
+                    "row": index,
+                    "error": "ftti_must_be_numeric_ms",
+                    "actual": ftti_value,
+                })
+            if is_blankish(ftti_reason):
+                errors.append({
+                    "stage": "stage3b",
+                    "row": index,
+                    "error": "ftti_reason_required_when_ftti_present",
+                })
+
+    check_stage3b_against_stage3a(sec_records, stage3a, effective_mf_id, errors)
+
+    for field in ["safety_goal", "safe_state"]:
+        value = data.get(field)
+        if is_blankish(value):
+            errors.append({"stage": "stage3b", "error": f"{field}_missing_or_blank"})
+        elif not isinstance(value, str):
+            errors.append({
+                "stage": "stage3b",
+                "error": f"{field}_must_be_string",
+                "actual_type": type(value).__name__,
             })
 
-    # Check safety_goal and safe_state (optional but recommended)
-    if "safety_goal" not in data:
-        errors.append({"stage": "stage3b_raw", "warning": "safety_goal_missing"})
-    if "safe_state" not in data:
-        errors.append({"stage": "stage3b_raw", "warning": "safe_state_missing"})
 
-
-def check_stage3b(data: Any, min_scenarios: int, max_scenarios: int, mf_id: str | None, errors: list[dict[str, Any]]) -> None:
+def check_stage3b_merged_hara(data: Any, min_scenarios: int, max_scenarios: int, mf_id: str | None, errors: list[dict[str, Any]]) -> None:
     """Validate Stage 3B complete HARA JSON."""
     if not isinstance(data, dict):
         errors.append({"stage": "stage3b", "error": "top_level_must_be_object"})
@@ -1281,74 +1708,6 @@ def normalize_stage_data(data: Any, stage: str) -> Any:
     return normalized
 
 
-def check_stage3_review(data: Any, hara_data: Any | None, mf_id: str | None, errors: list[dict[str, Any]]) -> None:
-    if not isinstance(data, dict):
-        errors.append({"stage": "stage3_review", "error": "top_level_must_be_object"})
-        return
-
-    per_scenario = rows(data, "per_scenario_reviews")
-    if not per_scenario:
-        if rows(data, "review_results"):
-            errors.append({
-                "stage": "stage3_review",
-                "error": "summary_cannot_replace_per_scenario_review",
-                "message": "stage3_review_summary.json 只能作为额外汇总，不能替代每个 MF 的 per_scenario_reviews。",
-            })
-        else:
-            errors.append({
-                "stage": "stage3_review",
-                "error": "per_scenario_reviews_missing",
-            })
-        return
-
-    check_required(per_scenario, STAGE3_REVIEW_COLUMNS, "stage3_review", errors)
-
-    if mf_id:
-        other = sorted({str(row.get("MF_ID", "")).strip() for row in per_scenario if str(row.get("MF_ID", "")).strip() != mf_id})
-        if other:
-            errors.append({
-                "stage": "stage3_review",
-                "error": "mixed_mf_id",
-                "expected": mf_id,
-                "found_other_mf_ids": other,
-            })
-
-    invalid_results = [
-        {"row": index, "result": row.get("result")}
-        for index, row in enumerate(per_scenario, start=1)
-        if str(row.get("result", "")).strip().lower() not in {"pass", "failed"}
-    ]
-    if invalid_results:
-        errors.append({
-            "stage": "stage3_review",
-            "error": "invalid_review_result",
-            "rows": invalid_results,
-        })
-
-    if hara_data is None:
-        return
-
-    hara_rows = rows(hara_data, "hara")
-    if mf_id:
-        hara_rows = [row for row in hara_rows if str(row.get("MF_ID", "")).strip() == mf_id]
-    expected = {(str(row.get("List_No", "")).strip(), str(row.get("MF_ID", "")).strip()) for row in hara_rows}
-    actual = {(str(row.get("List_No", "")).strip(), str(row.get("MF_ID", "")).strip()) for row in per_scenario}
-    missing = sorted(expected - actual)
-    extra = sorted(actual - expected)
-    if missing:
-        errors.append({
-            "stage": "stage3_review",
-            "error": "missing_scenario_reviews",
-            "scenarios": [{"List_No": list_no, "MF_ID": row_mf_id} for list_no, row_mf_id in missing],
-        })
-    if extra:
-        errors.append({
-            "stage": "stage3_review",
-            "error": "review_references_unknown_scenarios",
-            "scenarios": [{"List_No": list_no, "MF_ID": row_mf_id} for list_no, row_mf_id in extra],
-        })
-
-
 def highest_asil_by_mf(hara_rows: list[dict[str, Any]]) -> dict[str, str]:
     result: dict[str, str] = {}
     for row in hara_rows:
@@ -1437,11 +1796,12 @@ def check_stage4(data: Any, hara_data: Any | None, errors: list[dict[str, Any]],
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stage", choices=["stage0", "stage1", "stage1_slice", "stage2", "stage2_slice", "stage3", "stage3a", "stage3b", "stage3b_raw", "stage3_review", "stage4"], required=True)
+    parser.add_argument("--stage", choices=["stage0", "stage1", "stage1_slice", "stage2", "stage2_slice", "stage3", "stage3a", "stage3b", "stage3b_raw", "stage4"], required=True)
     parser.add_argument("--json", required=True)
     parser.add_argument("--stage0")
     parser.add_argument("--stage1")
     parser.add_argument("--stage2")
+    parser.add_argument("--stage3a")
     parser.add_argument("--hara")
     parser.add_argument("--operation-scenarios")
     parser.add_argument("--function-id")
@@ -1455,6 +1815,8 @@ def main() -> int:
     data = load_json(json_path)
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
+    effective_stage = "stage3b" if args.stage == "stage3b_raw" else args.stage
+
     if args.stage == "stage0":
         check_stage0(data, errors)
     elif args.stage == "stage1":
@@ -1476,46 +1838,50 @@ def main() -> int:
         operation_scenarios = load_json(Path(args.operation_scenarios)) if args.operation_scenarios else None
         check_stage3_operation_scenarios(data, operation_scenarios, errors)
     elif args.stage == "stage3a":
-        check_stage3a(data, args.min_scenarios, args.max_scenarios, args.mf_id, errors)
+        stage2 = normalize_stage_data(load_json(Path(args.stage2)), "stage2") if args.stage2 else None
         operation_scenarios = load_json(Path(args.operation_scenarios)) if args.operation_scenarios else None
         # 自动修正格式问题（空格、括号等）
-        format_fixes = apply_scenario_enum_format_fixes(data, operation_scenarios)
-        if format_fixes:
-            warnings.extend({
-                "stage": "stage3a_format_fix",
-                "message": f"已自动修正 {len(format_fixes)} 个格式问题（空格、括号等）",
-                "fixes": format_fixes,
-            } if isinstance(warnings, list) else {"format_fixes": format_fixes})
-        check_stage3a_operation_scenarios(data, operation_scenarios, errors)
+        if args.fix:
+            format_fixes = apply_scenario_enum_format_fixes(data, operation_scenarios)
+            if format_fixes:
+                warnings.append({
+                    "stage": "stage3a_format_fix",
+                    "message": f"已自动修正 {len(format_fixes)} 个格式问题（空格、括号等）",
+                    "fixes": format_fixes,
+                })
         # 自动应用"不涉及"修改
-        fixes = apply_scenario_condition_corrections(data, errors)
-        if fixes:
-            warnings.extend({
-                "stage": "stage3a_auto_fix",
-                "message": f"已根据 scenario_reasoning 自动将 {len(fixes)} 个字段修改为 '不涉及'",
-                "fixes": fixes,
-            } if isinstance(warnings, list) else {"fixes": fixes})
-    elif args.stage == "stage3b":
-        check_stage3b(data, args.min_scenarios, args.max_scenarios, args.mf_id, errors)
-        operation_scenarios = load_json(Path(args.operation_scenarios)) if args.operation_scenarios else None
-        check_stage3_operation_scenarios(data, operation_scenarios, errors)
-    elif args.stage == "stage3b_raw":
-        check_stage3b_raw(data, args.min_scenarios, args.max_scenarios, args.mf_id, errors)
-    elif args.stage == "stage3_review":
-        hara_data = normalize_stage_data(load_json(Path(args.hara)), "stage3") if args.hara else None
-        check_stage3_review(data, hara_data, args.mf_id, errors)
+        if args.fix:
+            fixes = apply_scenario_condition_corrections(data)
+            if fixes:
+                warnings.append({
+                    "stage": "stage3a_auto_fix",
+                    "message": f"已根据 scenario_reasoning 自动将 {len(fixes)} 个字段修改为 '不涉及'",
+                    "fixes": fixes,
+                })
+        check_stage3a(data, args.min_scenarios, args.max_scenarios, args.mf_id, errors, stage2)
+        check_stage3a_condition_consistency(rows(data, "scenarios"), errors)
+        check_stage3a_operation_scenarios(data, operation_scenarios, errors)
+    elif args.stage in {"stage3b", "stage3b_raw"}:
+        if args.stage == "stage3b_raw":
+            warnings.append({
+                "stage": "stage3b",
+                "warning": "deprecated_stage_name",
+                "message": "stage3b_raw 已改名为 stage3b；请更新命令为 --stage stage3b。",
+            })
+        stage3a = normalize_stage_data(load_json(Path(args.stage3a)), "stage3a") if args.stage3a else None
+        check_stage3b_sec(data, args.min_scenarios, args.max_scenarios, args.mf_id, errors, stage3a)
     elif args.stage == "stage4":
         hara_data = normalize_stage_data(load_json(Path(args.hara)), "stage3") if args.hara else None
         check_stage4(data, hara_data, errors, warnings)
 
     fixed = False
-    if args.fix and not errors and args.stage in {"stage1", "stage1_slice", "stage2", "stage2_slice", "stage3", "stage3a", "stage3b", "stage4"}:
+    if args.fix and not errors and args.stage in {"stage1", "stage1_slice", "stage2", "stage2_slice", "stage3", "stage3a", "stage4"}:
         dump_json(normalize_stage_data(data, args.stage), json_path)
         fixed = True
 
     summary = {
         "ok": not errors,
-        "stage": args.stage,
+        "stage": effective_stage,
         "file": args.json,
         "fixed": fixed,
         "errors": errors,
