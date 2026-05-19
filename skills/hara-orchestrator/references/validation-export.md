@@ -137,7 +137,7 @@ python tools/hara/run_hara_export.py --json output/<run_id>_stage4_sg_sum.json -
 
 导出前自检：
 
-- 所有非 `nan` 功能故障都出现在 `mf_vehicle_hazards`。
+- 所有非 `nan` 且 `field_reasoning.推理.是否有安全风险=是` 的功能故障都出现在 `mf_vehicle_hazards`；适用但无安全风险的故障只保留在 Stage1。
 - `mf_vehicle_hazards` 中所有 MF 都出现在 `hara`。
 - 每个 MF 都有 10 到 20 条 HARA 场景。
 - `结果ASIL` 已由工具校验。

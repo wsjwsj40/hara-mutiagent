@@ -18,7 +18,26 @@ except ImportError:  # pragma: no cover
 
 STAGE1_GUIDE_COLUMNS = ["功能丧失", "过大", "过早", "过小", "过晚", "非预期激活", "卡滞", "方向错误"]
 STAGE1_TOP_LEVEL_KEYS = {"meta", "derive_mf", "review_log", "knowledge_evidence", "field_reasoning"}
-STAGE1_REASONING_FIELDS = ["功能输出", "异常情况", "后果", "是否有安全风险"]
+STAGE1_REASONING_FIELDS = ["功能输出", "异常情况", "后果", "是否适用", "是否有安全风险"]
+STAGE1_REASONING_ALIASES = {
+    "是否适用": ["是否适合"],
+    "是否有安全风险": ["是否有危害", "是否有安全危害"],
+}
+STAGE1_OPPOSITE_STATE_PAIRS = (
+    ("拉起", "释放"),
+    ("夹紧", "松开"),
+    ("锁止", "解锁"),
+    ("上锁", "解锁"),
+    ("开启", "关闭"),
+    ("打开", "关闭"),
+    ("接合", "分离"),
+    ("施加", "解除"),
+    ("上升", "下降"),
+    ("升起", "降下"),
+    ("加速", "减速"),
+    ("前进", "后退"),
+    ("左转", "右转"),
+)
 STAGE1_MERGED_FAULT_FIELDS = ["过大/过早", "过小/过晚"]
 STAGE1_MULTI_EFFECT_MARKERS = ["或", "以及", "同时", "；", ";"]
 STAGE2_TRACE_COLUMNS = ["Function_ID", "source_function_name", "Stage1_Row", "Fault_Field", "Stage1_Fault_Text"]
@@ -60,6 +79,37 @@ STAGE3A_CONDITION_TO_SCENARIO_FIELD = {
     "车速": "车速(km/h)",
     "特殊要素": "特殊要素",
 }
+STAGE3A_STATIONARY_HOLD_STATES = {"驻车", "停车熄火", "停车未熄火", "泊车", "自动泊车", "启动起步"}
+STAGE3A_ROLL_TERMS = ("溜车", "滑动", "滑移", "纵向移动", "前溜", "后溜", "滑行")
+STAGE3A_FORWARD_ROLL_TERMS = ("向前滑", "前溜", "向前溜", "前向滑", "向前移动")
+STAGE3A_BACKWARD_ROLL_TERMS = ("向后滑", "后溜", "向后溜", "后向滑", "向后移动")
+STAGE3A_EPB_HOLD_TERMS = ("EPB", "驻车制动", "静态开关", "拉起", "夹紧力", "夹紧", "无法驻车", "未执行", "无响应")
+STAGE3A_SLOPE_TERMS = ("上坡", "下坡", "坡度", "陡坡", "坡道", "斜坡")
+STAGE3A_DRIVING_FORCE_TERMS = (
+    "D挡",
+    "D档",
+    "R挡",
+    "R档",
+    "未挂P",
+    "未挂入P",
+    "P挡未锁",
+    "P档未锁",
+    "挡位",
+    "档位",
+    "蠕行",
+    "驱动扭矩",
+    "驱动力",
+    "牵引力",
+    "动力输出",
+    "发动机牵引",
+    "外力",
+    "推动",
+    "被推",
+    "拖拽",
+    "牵引",
+)
+STAGE3A_WEATHER_OR_VISIBILITY_ENV = ("降雨", "降雪", "冰雹", "雾霾", "沙尘暴", "夜间")
+STAGE3A_VISIBILITY_SPECIAL = ("玻璃上起雾", "夜晚路灯条件", "迎面强光")
 
 # Stage 3B SEC records columns (本阶段生成的 SEC 评级字段)
 SEC_RECORDS_COLUMNS = [
@@ -220,6 +270,22 @@ def get_by_compact_key(mapping: dict[str, Any], expected: str, default: Any = No
     return default
 
 
+def stage1_reasoning_candidates(expected: str) -> list[str]:
+    return [expected, *STAGE1_REASONING_ALIASES.get(expected, [])]
+
+
+def has_stage1_reasoning_key(mapping: dict[str, Any], expected: str) -> bool:
+    return any(has_compact_key(mapping, candidate) for candidate in stage1_reasoning_candidates(expected))
+
+
+def get_stage1_reasoning_value(mapping: dict[str, Any], expected: str, default: Any = None) -> Any:
+    for candidate in stage1_reasoning_candidates(expected):
+        value = get_by_compact_key(mapping, candidate, None)
+        if value is not None:
+            return value
+    return default
+
+
 def parse_positive_int(value: Any) -> int | None:
     try:
         parsed = int(str(value).strip())
@@ -350,6 +416,81 @@ def check_stage1_derive_rows(
             })
 
 
+def add_stage1_semantic_warnings(
+    *,
+    stage: str,
+    row_no: int,
+    function_name: str,
+    field: str,
+    fault_value: Any,
+    applicable: str,
+    risk: str,
+    warnings: list[dict[str, Any]] | None,
+) -> None:
+    if warnings is None or is_nan_like(fault_value):
+        return
+
+    function_text = compact_text(function_name)
+    fault_text = compact_text(fault_value)
+
+    if (
+        field == "过大"
+        and text_equal_ignoring_space(applicable, "是")
+        and text_equal_ignoring_space(risk, "否")
+    ):
+        no_injury_markers = (
+            "不直接造成人身伤害",
+            "不会直接造成人身伤害",
+            "不直接导致人身伤害",
+            "不会直接导致人身伤害",
+            "不形成人身伤害风险",
+            "无直接人身伤害风险",
+            "不直接造成人员伤害",
+            "不会直接造成人员伤害",
+        )
+        if not any(compact_text(marker) in fault_text for marker in no_injury_markers):
+            warnings.append({
+                "stage": stage,
+                "row": row_no,
+                "field": field,
+                "warning": "stage1_too_much_non_safety_boundary_not_visible",
+                "message": "过大故障适用但是否有安全风险=否时，derive_mf 可见描述建议明确不直接造成人身伤害风险，避免后续误入 Stage2。",
+            })
+
+    if field == "卡滞":
+        for target_state, opposite_state in STAGE1_OPPOSITE_STATE_PAIRS:
+            target = compact_text(target_state)
+            opposite = compact_text(opposite_state)
+            if target not in function_text or opposite in function_text:
+                continue
+            opposite_direction_markers = (
+                f"无法切换到{opposite}",
+                f"无法切换至{opposite}",
+                f"不能切换到{opposite}",
+                f"不能切换至{opposite}",
+                f"无法转换到{opposite}",
+                f"无法转换至{opposite}",
+                f"无法进入{opposite}",
+                f"无法完成{opposite}",
+                f"{opposite}过程中无法",
+                f"{opposite}过程无法",
+                f"卡滞在{target}",
+                f"卡滞于{target}",
+                f"卡滞在已{target}",
+                f"卡滞于已{target}",
+            )
+            if not any(marker in fault_text for marker in opposite_direction_markers):
+                continue
+            warnings.append({
+                "stage": stage,
+                "row": row_no,
+                "field": field,
+                "warning": "stage1_stuck_target_state_direction_suspect",
+                "message": f"当前功能目标像是进入“{target_state}”状态，卡滞描述却指向“{opposite_state}”或已处于目标状态后无法退出；请确认是否应改为目标状态无法建立、无法切换到目标状态，或执行过程中无法完成状态切换。",
+            })
+            break
+
+
 def check_stage1_field_reasoning(
     data: dict[str, Any],
     derive_mf: list[dict[str, Any]],
@@ -463,7 +604,8 @@ def check_stage1_field_reasoning(
             missing_reasoning = [
                 required
                 for required in STAGE1_REASONING_FIELDS
-                if not has_compact_key(inference, required) or str(get_by_compact_key(inference, required) or "").strip() == ""
+                if not has_stage1_reasoning_key(inference, required)
+                or str(get_stage1_reasoning_value(inference, required) or "").strip() == ""
             ]
             if missing_reasoning:
                 errors.append({
@@ -475,7 +617,18 @@ def check_stage1_field_reasoning(
                 })
                 continue
 
-            risk = str(get_by_compact_key(inference, "是否有安全风险", "") or "").strip()
+            applicable = str(get_stage1_reasoning_value(inference, "是否适用", "") or "").strip()
+            if not text_in_ignoring_space(applicable, {"是", "否"}):
+                errors.append({
+                    "stage": stage,
+                    "row": row_no,
+                    "field": field,
+                    "error": "applicability_flag_must_be_yes_or_no",
+                    "actual": applicable,
+                })
+                continue
+
+            risk = str(get_stage1_reasoning_value(inference, "是否有安全风险", "") or "").strip()
             if not text_in_ignoring_space(risk, {"是", "否"}):
                 errors.append({
                     "stage": stage,
@@ -486,9 +639,18 @@ def check_stage1_field_reasoning(
                 })
                 continue
 
+            if text_equal_ignoring_space(risk, "是") and text_equal_ignoring_space(applicable, "否"):
+                errors.append({
+                    "stage": stage,
+                    "row": row_no,
+                    "field": field,
+                    "error": "risk_yes_but_applicability_no",
+                    "message": "有安全风险的故障必须先是适用的功能故障。",
+                })
+
             fault_value = get_by_alias(derive_row, field)
-            if text_equal_ignoring_space(risk, "是") and is_nan_like(fault_value):
-                replacement = str(get_by_compact_key(inference, "异常情况", "") or "").strip()
+            if text_equal_ignoring_space(applicable, "是") and is_nan_like(fault_value):
+                replacement = str(get_stage1_reasoning_value(inference, "异常情况", "") or "").strip()
                 if auto_fix and replacement:
                     derive_row[field] = replacement
                     if warnings is not None:
@@ -496,7 +658,7 @@ def check_stage1_field_reasoning(
                             "stage": f"{stage}_auto_fix",
                             "row": row_no,
                             "field": field,
-                            "warning": "risk_yes_fault_nan_replaced_from_reasoning",
+                            "warning": "applicability_yes_fault_nan_replaced_from_reasoning",
                             "old_value": fault_value,
                             "new_value": replacement,
                             "message": "已根据 field_reasoning.推理.异常情况 回填故障字段。",
@@ -506,9 +668,9 @@ def check_stage1_field_reasoning(
                     "stage": stage,
                     "row": row_no,
                     "field": field,
-                    "error": "risk_yes_but_fault_is_nan",
+                    "error": "applicability_yes_but_fault_is_nan",
                 })
-            elif text_equal_ignoring_space(risk, "否") and not is_nan_like(fault_value):
+            elif text_equal_ignoring_space(applicable, "否") and not is_nan_like(fault_value):
                 if auto_fix:
                     derive_row[field] = "nan"
                     if warnings is not None:
@@ -516,18 +678,29 @@ def check_stage1_field_reasoning(
                             "stage": f"{stage}_auto_fix",
                             "row": row_no,
                             "field": field,
-                            "warning": "risk_no_fault_replaced_with_nan",
+                            "warning": "applicability_no_fault_replaced_with_nan",
                             "old_value": fault_value,
                             "new_value": "nan",
-                            "message": "已根据 field_reasoning.推理.是否有安全风险=否 将故障字段置为 nan。",
+                            "message": "已根据 field_reasoning.推理.是否适用=否 将故障字段置为 nan。",
                         })
                     continue
                 errors.append({
                     "stage": stage,
                     "row": row_no,
                     "field": field,
-                    "error": "risk_no_but_fault_is_not_nan",
+                    "error": "applicability_no_but_fault_is_not_nan",
                 })
+
+            add_stage1_semantic_warnings(
+                stage=stage,
+                row_no=row_no,
+                function_name=expected_name,
+                field=field,
+                fault_value=get_by_alias(derive_row, field),
+                applicable=applicable,
+                risk=risk,
+                warnings=warnings,
+            )
 
         missing_fields = [field for field in STAGE1_GUIDE_COLUMNS if field not in seen_fields]
         if missing_fields:
@@ -620,13 +793,109 @@ def check_stage1_slice(
     check_stage1_field_reasoning(data, derive_mf, errors, warnings, auto_fix=auto_fix, stage="stage1_slice")
 
 
+def stage1_field_reasoning_lookup(stage1: Any) -> dict[tuple[int, str], dict[str, str]]:
+    lookup: dict[tuple[int, str], dict[str, str]] = {}
+    if not isinstance(stage1, dict):
+        return lookup
+    for entry in rows(stage1, "field_reasoning"):
+        row_no = parse_positive_int(get_by_compact_key(entry, "row"))
+        if row_no is None:
+            continue
+        field_reasoning = get_by_compact_key(entry, "字段推理")
+        if not isinstance(field_reasoning, list):
+            continue
+        for item in field_reasoning:
+            if not isinstance(item, dict):
+                continue
+            field = str(get_by_compact_key(item, "字段", "") or "").strip()
+            canonical_field = next(
+                (candidate for candidate in STAGE1_GUIDE_COLUMNS if text_equal_ignoring_space(field, candidate)),
+                "",
+            )
+            inference = get_by_compact_key(item, "推理")
+            if not canonical_field or not isinstance(inference, dict):
+                continue
+            lookup[(row_no, canonical_field)] = {
+                "是否适用": str(get_stage1_reasoning_value(inference, "是否适用", "") or "").strip(),
+                "是否有安全风险": str(get_stage1_reasoning_value(inference, "是否有安全风险", "") or "").strip(),
+            }
+    return lookup
+
+
+def expected_stage2_faults(stage1: Any) -> dict[tuple[int, str], Any]:
+    """Return Stage1 faults that should be expanded by Stage2.
+
+    Stage1 may contain applicable functional faults that are not safety-relevant.
+    Those remain visible in Stage1 but are excluded from Stage2 when
+    field_reasoning.推理.是否有安全风险 is explicitly "否".
+    """
+    lookup = stage1_field_reasoning_lookup(stage1)
+    expected: dict[tuple[int, str], Any] = {}
+    for row_no, row in enumerate(rows(stage1, "derive_mf"), start=1):
+        for field in STAGE1_GUIDE_COLUMNS:
+            fault_value = get_by_alias(row, field)
+            if is_nan_like(fault_value):
+                continue
+            reasoning = lookup.get((row_no, field), {})
+            risk = reasoning.get("是否有安全风险", "")
+            if text_equal_ignoring_space(risk, "否"):
+                continue
+            expected[(row_no, field)] = fault_value
+    return expected
+
+
 def count_stage1_faults(stage1: Any) -> int:
-    return sum(
-        1
-        for row in rows(stage1, "derive_mf")
+    return len(expected_stage2_faults(stage1))
+
+
+def check_stage2_against_stage1_faults(
+    hazards: list[dict[str, Any]],
+    stage1: Any | None,
+    errors: list[dict[str, Any]],
+    stage: str,
+) -> None:
+    if stage1 is None:
+        return
+    expected = expected_stage2_faults(stage1)
+    all_non_nan_faults = {
+        (row_no, field): get_by_alias(row, field)
+        for row_no, row in enumerate(rows(stage1, "derive_mf"), start=1)
         for field in STAGE1_GUIDE_COLUMNS
-        if field in row and not is_nan_like(row.get(field))
-    )
+        if not is_nan_like(get_by_alias(row, field))
+    }
+    for index, row in enumerate(hazards, start=1):
+        stage1_row = parse_positive_int(get_by_alias(row, "Stage1_Row"))
+        fault_field_text = str(get_by_alias(row, "Fault_Field") or "").strip()
+        fault_field = next(
+            (candidate for candidate in STAGE1_GUIDE_COLUMNS if text_equal_ignoring_space(fault_field_text, candidate)),
+            "",
+        )
+        if stage1_row is None or not fault_field:
+            continue
+        key = (stage1_row, fault_field)
+        if key not in expected:
+            error = "stage2_fault_not_safety_relevant" if key in all_non_nan_faults else "stage2_fault_not_found_in_stage1"
+            errors.append({
+                "stage": stage,
+                "row": index,
+                "error": error,
+                "Stage1_Row": stage1_row,
+                "Fault_Field": fault_field_text,
+                "message": "Stage2 只能包含 Stage1 中非 nan 且 field_reasoning.推理.是否有安全风险=是 的故障。",
+            })
+            continue
+        stage1_fault_text = str(get_by_alias(row, "Stage1_Fault_Text") or "").strip()
+        expected_fault_text = str(expected[key] or "").strip()
+        if stage1_fault_text and expected_fault_text and not text_equal_ignoring_space(stage1_fault_text, expected_fault_text):
+            errors.append({
+                "stage": stage,
+                "row": index,
+                "error": "stage1_fault_text_mismatch",
+                "Stage1_Row": stage1_row,
+                "Fault_Field": fault_field_text,
+                "expected": expected_fault_text,
+                "actual": stage1_fault_text,
+            })
 
 
 def check_stage2(
@@ -694,12 +963,14 @@ def check_stage2(
                 "actual": selected,
             })
 
+    check_stage2_against_stage1_faults(hazards, stage1, errors, stage)
+
     if expected is not None:
         if len(hazards) != expected:
             errors.append({
                 "stage": stage,
                 "error": "row_count_mismatch",
-                "expected_from_stage1_non_nan_faults": expected,
+                "expected_from_stage1_safety_relevant_faults": expected,
                 "actual": len(hazards),
             })
 
@@ -886,6 +1157,164 @@ def condition_is_not_applicable(value: Any) -> bool:
 
 def condition_is_related(value: Any) -> bool:
     return compact_text(value).startswith(compact_text("相关"))
+
+
+def contains_any(text: str, terms: tuple[str, ...] | set[str]) -> bool:
+    return any(compact_text(term) in text for term in terms)
+
+
+def compact_join(values: list[Any]) -> str:
+    return compact_text(" ".join(str(value) for value in values if value is not None))
+
+
+def scenario_reasoning_text(row: dict[str, Any]) -> str:
+    return compact_text(get_by_compact_key(row, "scenario_reasoning") or "")
+
+
+def stage3a_condition_reasoning(row: dict[str, Any], field: str) -> str:
+    reasoning = get_by_compact_key(row, "scenario_reasoning")
+    if not isinstance(reasoning, dict):
+        return ""
+    conditions = get_by_compact_key(reasoning, "场景条件相关性检查")
+    if not isinstance(conditions, dict):
+        return ""
+    return str(get_by_compact_key(conditions, field, "") or "").strip()
+
+
+def is_stage3a_slope_road(road_condition: Any) -> bool:
+    return text_in_ignoring_space(road_condition, {"上坡道路", "下坡道路"})
+
+
+def check_stage3a_semantic_logic(scenarios: list[dict[str, Any]], errors: list[dict[str, Any]]) -> None:
+    """Catch high-confidence Stage 3A scene logic errors.
+
+    This intentionally stays heuristic: it blocks contradictions that should be
+    fixed before SEC rating, while leaving nuanced risk-rating judgment to Stage3B.
+    """
+    for index, row in enumerate(scenarios, start=1):
+        row_no = get_by_alias(row, "List_No") or index
+        road_condition = str(get_by_alias(row, "道路条件") or "").strip()
+        environment = str(get_by_alias(row, "环境条件") or "").strip()
+        vehicle_state = str(get_by_alias(row, "车辆状态") or "").strip()
+        speed = str(get_by_alias(row, "车速(km/h)") or "").strip()
+        special = str(get_by_alias(row, "特殊要素") or "").strip()
+        additional = str(get_by_alias(row, "附加条件") or "").strip()
+        hazard_event = str(get_by_alias(row, "危害事件") or "").strip()
+        fault = str(get_by_alias(row, "故障描述") or "").strip()
+        vehicle_hazard = str(get_by_alias(row, "整车危害") or "").strip()
+        reasoning = scenario_reasoning_text(row)
+
+        condition_text = compact_join([additional, hazard_event, reasoning])
+        causal_text = compact_join([fault, vehicle_hazard, hazard_event, reasoning])
+        fault_text = compact_text(fault)
+        hazard_text = compact_text(hazard_event)
+        additional_text = compact_text(additional)
+
+        has_roll_hazard = contains_any(causal_text, STAGE3A_ROLL_TERMS)
+        is_stationary_hold = (
+            text_in_ignoring_space(vehicle_state, STAGE3A_STATIONARY_HOLD_STATES)
+            or text_equal_ignoring_space(speed, "静止状态")
+        )
+        is_epb_hold_fault = contains_any(fault_text, STAGE3A_EPB_HOLD_TERMS)
+        has_slope_text = contains_any(condition_text, STAGE3A_SLOPE_TERMS) or bool(
+            re.search(r"\d+(?:\.\d+)?%", condition_text)
+        )
+        has_slope_road = is_stage3a_slope_road(road_condition)
+        has_drive_or_external_force = contains_any(condition_text, STAGE3A_DRIVING_FORCE_TERMS)
+
+        if has_slope_text and not has_slope_road:
+            errors.append({
+                "stage": "stage3a",
+                "row": index,
+                "List_No": row_no,
+                "error": "slope_text_requires_slope_road_condition",
+                "road_condition": road_condition,
+                "message": "附加条件、危害事件或推理中出现上坡/下坡/坡度/陡坡时，道路条件必须选择 上坡道路 或 下坡道路，不能选择直道或普通路面枚举。",
+            })
+
+        if text_equal_ignoring_space(road_condition, "上坡道路") and contains_any(condition_text, STAGE3A_FORWARD_ROLL_TERMS):
+            errors.append({
+                "stage": "stage3a",
+                "row": index,
+                "List_No": row_no,
+                "error": "uphill_roll_direction_must_be_backward",
+                "message": "按 Stage3A 车辆动力学规则，上坡道路溜车方向应为向后，不能写成向前滑动。",
+            })
+
+        if text_equal_ignoring_space(road_condition, "下坡道路") and contains_any(condition_text, STAGE3A_BACKWARD_ROLL_TERMS):
+            errors.append({
+                "stage": "stage3a",
+                "row": index,
+                "List_No": row_no,
+                "error": "downhill_roll_direction_must_be_forward",
+                "message": "按 Stage3A 车辆动力学规则，下坡道路溜车方向应为向前，不能写成向后滑动。",
+            })
+
+        if has_roll_hazard and is_stationary_hold and not (has_slope_road or has_slope_text or has_drive_or_external_force):
+            errors.append({
+                "stage": "stage3a",
+                "row": index,
+                "List_No": row_no,
+                "error": "stationary_longitudinal_movement_lacks_force_source",
+                "vehicle_state": vehicle_state,
+                "speed": speed,
+                "road_condition": road_condition,
+                "message": "驻车/停车/静止场景发生非预期纵向移动时，必须说明坡道重力、D/R挡蠕行、未挂P挡、外力推动等实际纵向力来源；低附着、天气或前车距离不能单独导致当前 MF 的溜车危害。",
+            })
+
+        collides_with_front_vehicle = (
+            "与前车" in hazard_text
+            or "前车发生" in hazard_text
+            or "前方停放车辆" in hazard_text
+            or ("前方" in additional_text and ("停放车辆" in additional_text or "前车" in additional_text))
+        )
+        collides_with_oncoming = (
+            "与对向车辆" in hazard_text
+            or "与对向来车" in hazard_text
+            or "对向来车" in additional_text
+            or text_equal_ignoring_space(special, "与对向来车距离较近")
+        )
+        if "对向车辆乘员" in hazard_text and collides_with_front_vehicle and not collides_with_oncoming:
+            errors.append({
+                "stage": "stage3a",
+                "row": index,
+                "List_No": row_no,
+                "error": "risk_object_conflicts_with_front_vehicle_collision",
+                "message": "危害事件写了对向车辆乘员，但附加条件/碰撞对象是前车或前方停放车辆；风险对象应与碰撞对象一致。",
+            })
+        if ("前车乘员" in hazard_text or "前方车辆乘员" in hazard_text) and collides_with_oncoming and not collides_with_front_vehicle:
+            errors.append({
+                "stage": "stage3a",
+                "row": index,
+                "List_No": row_no,
+                "error": "risk_object_conflicts_with_oncoming_collision",
+                "message": "危害事件写了前车/前方车辆乘员，但场景对象是对向来车；风险对象应与碰撞对象一致。",
+            })
+
+        if is_epb_hold_fault and has_roll_hazard and is_stationary_hold:
+            env_reasoning = stage3a_condition_reasoning(row, "环境条件")
+            if environment and not text_in_ignoring_space(environment, {"不涉及", "ALL", "日间"}) and condition_is_related(env_reasoning):
+                is_wind_push = ("大风" in compact_text(environment) or "强侧面风" in compact_text(environment)) and contains_any(condition_text, {"推动", "外力"})
+                if not is_wind_push and contains_any(compact_text(environment), STAGE3A_WEATHER_OR_VISIBILITY_ENV):
+                    errors.append({
+                        "stage": "stage3a",
+                        "row": index,
+                        "List_No": row_no,
+                        "error": "epb_roll_environment_marked_related_without_causal_role",
+                        "environment": environment,
+                        "message": "EPB/驻车保持类溜车场景中，天气/能见度不能替代故障因果；若只影响暴露或可控性，应在 Stage3A 标为 不涉及。",
+                    })
+
+            special_reasoning = stage3a_condition_reasoning(row, "特殊要素")
+            if special and condition_is_related(special_reasoning) and contains_any(compact_text(special), STAGE3A_VISIBILITY_SPECIAL):
+                errors.append({
+                    "stage": "stage3a",
+                    "row": index,
+                    "List_No": row_no,
+                    "error": "epb_roll_visibility_special_marked_related_without_causal_role",
+                    "special": special,
+                    "message": "玻璃起雾、路灯、强光等视野条件不改变 EPB 驻车溜车的发生链路；若只影响驾驶员感知或可控性，应标为 不涉及。",
+                })
 
 
 def check_stage3a_top_level(data: dict[str, Any], errors: list[dict[str, Any]]) -> None:
@@ -1135,6 +1564,7 @@ def check_stage3a(
                         "error": "场景条件相关性检查_missing_field",
                         "field": field,
                     })
+    check_stage3a_semantic_logic(scenarios, errors)
     check_stage3a_against_stage2(scenarios, stage2, effective_mf_id, errors)
 
 

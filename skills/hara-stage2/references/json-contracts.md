@@ -65,8 +65,8 @@
 
 - `meta.stage` 为 `stage2_slice`。
 - `meta.function_id` 为当前 `Function_ID`。
-- `mf_vehicle_hazards` 行数等于当前 Stage1 单功能片段中非 `nan` 故障单元格数量。
-- 当前功能没有非 `nan` 故障时，`mf_vehicle_hazards` 和 `hazard_reasoning` 可以为空数组。
+- `mf_vehicle_hazards` 行数等于当前 Stage1 单功能片段中非 `nan` 且 `field_reasoning.推理.是否有安全风险=是` 的故障单元格数量。
+- 当前功能没有安全相关故障时，`mf_vehicle_hazards` 和 `hazard_reasoning` 可以为空数组；非 `nan` 但 `是否有安全风险=否` 的故障不进入本阶段。
 - 片段内 `No.` 从 1 开始连续。
 - 片段内 `Milf_ID` 可以本地连续；最终全局编号由 `merge_stage2.py` 重排。
 - 片段内 `Stage1_Row` 可以填 `1`；最终合并时会更新为该功能在最终 Stage1 中的全局行号。
