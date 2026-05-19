@@ -28,8 +28,8 @@ hara-orchestrator（只编排，不分析）
   |     +-- batch 子任务：每批最多 5 条 Stage3A/Stage3B 配对记录做 SEC 评审
   +-- merge_stage3.py + check_stage_json.py：合并 Stage3A/3B 并做确定性校验
   |
-  +-- stage4 子 agent：SG_Sum 汇总
-  +-- stage4r 子 agent：SG_Sum 评审
+  +-- stage4 子 agent：工具派生 SG_Sum，模型只补操作模式
+  +-- stage4r 子 agent：只评审操作模式
 ```
 
 ## 核心原则
@@ -130,8 +130,8 @@ Stage3BR 通过后，`merge_stage3.py` 合并 Stage3A/3B，随后 `check_stage_j
 | Stage3B | Stage3 context + Stage3A JSON + batch contexts | Stage3B SEC JSON |
 | Stage3BR | Stage3 context + Stage3A JSON + Stage3B JSON + review batch contexts | Stage3B review trace |
 | Stage3 merge/check | Stage3A JSON + Stage3B JSON | merged Stage3 HARA JSON |
-| Stage4 | Stage3 HARA 文件目录 | Stage4 SG_Sum JSON |
-| Stage4R | Stage3 HARA + Stage4 JSON | Stage4R review JSON |
+| Stage4 | Stage3 HARA 文件目录 | Stage4 SG_Sum JSON（仅操作模式由模型填写） |
+| Stage4R | Stage3 HARA + Stage4 JSON | Stage4R 操作模式 review JSON |
 
 ## 失败处理
 

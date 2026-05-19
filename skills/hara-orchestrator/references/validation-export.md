@@ -1,15 +1,15 @@
-# 校验、ASIL 同步与导出
+# 校验、ASIL 校验与导出
 
 ## 使用方式
 
-只在编排器需要验证、合并、ASIL 同步或最终导出时读取本文件。不要把本文件内容复制给各 Stage agent；Stage agent 应只接收路径和本阶段所需的窄参考。
+只在编排器需要验证、合并、ASIL 校验或最终导出时读取本文件。不要把本文件内容复制给各 Stage agent；Stage agent 应只接收路径和本阶段所需的窄参考。
 
 ## 目录
 
 - JSON 语法与契约预检
 - Stage 3 上下文切片与分段评审
 - Stage 3A 和 Stage 3B 合并
-- ASIL 计算与同步
+- ASIL 计算与校验
 - 合并与导出
 
 ## JSON 语法与契约预检
@@ -31,7 +31,7 @@ python tools/hara/merge_stage2_review.py --input-dir output --stage0 output/<run
 python tools/hara/check_stage_json.py --stage stage3a --json output/<run_id>_stage3a_<MF_ID>_scenarios.json --mf-id <MF_ID> --operation-scenarios knowledge-base/automotive/hara/common/operation_scenarios.json --min-scenarios 10 --max-scenarios 20 --fix
 python tools/hara/check_stage_json.py --stage stage3b --json output/<run_id>_stage3b_<MF_ID>_sec.json --stage3a output/<run_id>_stage3a_<MF_ID>_scenarios.json --mf-id <MF_ID> --min-scenarios 10 --max-scenarios 20
 python tools/hara/check_stage_json.py --stage stage3 --json output/<run_id>_stage3_<MF_ID>_hara.json --mf-id <MF_ID> --stage2 output/<run_id>_stage2_mf_vehicle_hazards.json --operation-scenarios knowledge-base/automotive/hara/common/operation_scenarios.json --min-scenarios 10 --max-scenarios 20 --fix
-python tools/hara/check_stage_json.py --stage stage4 --json output/<run_id>_stage4_sg_sum.json --hara output/<run_id>_stage3_<MF_ID>_hara.json --fix
+python tools/hara/check_stage_json.py --stage stage4 --json output/<run_id>_stage4_sg_sum.json --hara output/<run_id>_before_stage4_check.json --fix
 ```
 
 如果报 `json_syntax_error`，根据报错行列修复缺逗号、缺引号、尾随逗号、括号不闭合等问题，不要继续导出 Excel。
@@ -76,9 +76,9 @@ Stage3BR 完成后，必须先合并 Stage3A 和 Stage3B 的 JSON 文件：
 python tools/hara/merge_stage3.py --stage3a output/<run_id>_stage3a_<MF_ID>_scenarios.json --stage3b output/<run_id>_stage3b_<MF_ID>_sec.json --output output/<run_id>_stage3_<MF_ID>_hara.json
 ```
 
-对每个 MF 执行合并，生成完整的 HARA JSON 文件并通过 `--stage stage3` 后，才能进入 ASIL 同步。
+对每个 MF 执行合并，生成完整的 HARA JSON 文件并通过 `--stage stage3` 后，才能进入 Stage4。
 
-## ASIL 计算与同步
+## ASIL 计算与校验
 
 模型负责判断 S/E/C 和解释理由；最终 `结果ASIL` 必须由工具校验。
 
@@ -101,22 +101,21 @@ S3 + E3 + C3 = 9 => C
 S2 + E4 + C2 = 8 => B
 ```
 
-重要顺序：所有 MF 的 Stage3AR、Stage3BR 完成并修正，且合并后的 Stage3 HARA 通过 `--stage stage3` 后，再统一执行 ASIL 校验。不要每个 MF 刚生成就校验。
-
-每个 Stage 3 文件执行：
-
-```text
-python tools/hara/apply_asil_matrix.py --input output/<run_id>_stage3_<MF_ID>_hara.json --output output/<run_id>_stage3_<MF_ID>_hara.json
-```
-
-如果工具修正了 ASIL，必须同步安全目标和安全状态：
-
-- 最终 ASIL 为 `QM`：`安全目标`、`安全状态`、`FTTI(ms)` 置空。
-- 最终 ASIL 非 `QM`：如果原来因为误判为 QM 导致 `安全目标` 或 `安全状态` 为空，必须补齐；补齐内容应参考 `05-safety_goal.md`。
+重要顺序：所有 MF 的 Stage3AR、Stage3BR 完成并修正，且合并后的 Stage3 HARA 通过 `--stage stage3` 后，直接进入 Stage4。标准流程不再调用 `apply_asil_matrix.py`；如果 `check_stage_json.py` 报 `asil_mismatch_with_sec` 或 `asil_cannot_be_calculated_from_sec`，应退回 Stage3B 修正 S/E/C 或 `结果ASIL`，不要用脚本自动覆盖语义产物。
 
 ## 合并与导出
 
 文本质量、场景合理性和运动方向由 Stage3AR 评审；S/E/C、FTTI、安全目标和安全状态由 Stage3BR 评审；合并完整性、Stage2 对齐和枚举格式由 `check_stage_json.py --stage stage3` 校验。脚本只承担确定性校验与格式归一化，不再用脚本自动改写语义文本。
+
+Stage4 中只有 `操作模式` 由模型填写。`generate_stage4_sg.py` 会在同一 `MF_ID` 内按相同 `安全目标` 汇总 HARA 非 QM 场景：`ASIL Level` 取该 MF/安全目标组合内最高值，`FTTI(ms)` 取最小值，不同 MF 不合并，其他派生字段由工具生成，并把 `操作模式` 标为 `待Stage4模型填写`。Stage4 agent 填完操作模式后，必须用合并 HARA 校验：
+
+```text
+python tools/hara/generate_stage4_sg.py --stage-dir output --prefix <run_id> --out output/<run_id>_stage4_sg_sum.json
+python tools/hara/hara_stage_merge.py --stage-dir output --prefix <run_id> --out output/<run_id>_before_stage4_check.json
+python tools/hara/check_stage_json.py --stage stage4 --json output/<run_id>_stage4_sg_sum.json --hara output/<run_id>_before_stage4_check.json --fix
+```
+
+最终 `validate_hara_json.py` 会重建 Stage4 派生字段，但会保留已填写的 `操作模式`。
 
 合并阶段 JSON：
 

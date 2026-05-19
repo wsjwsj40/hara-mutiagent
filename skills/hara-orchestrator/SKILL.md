@@ -1,13 +1,13 @@
 ---
 name: hara-orchestrator
-description: HARA 端到端流程编排与质量门禁。用于完整 HARA 分析、协调多个 HARA 阶段、从中间阶段恢复、验证阶段输出、合并 Stage 3A/3B、计算 ASIL、生成 SG_Sum 或导出最终 JSON/Excel。本 skill 只控制流程；具体分析交给 hara-stage0/1/2/3a/3b/4 及各 review skill。
+description: HARA 端到端流程编排与质量门禁。用于完整 HARA 分析、协调多个 HARA 阶段、从中间阶段恢复、验证阶段输出、合并 Stage 3A/3B、校验 ASIL、生成 SG_Sum 或导出最终 JSON/Excel。本 skill 只控制流程；具体分析交给 hara-stage0/1/2/3a/3b/4 及各 review skill。
 ---
 
 # HARA 编排器
 
 ## 职责边界
 
-将本 skill 作为完整 HARA 流程的单一入口。不要在编排器上下文里执行阶段分析、评审或 SEC 分维度判断；这里只做调度、验证、合并、ASIL 同步、导出和状态汇总。
+将本 skill 作为完整 HARA 流程的单一入口。不要在编排器上下文里执行阶段分析、评审或 SEC 分维度判断；这里只做调度、验证、合并、ASIL 校验、导出和状态汇总。
 
 ## 上下文管理
 
@@ -108,11 +108,10 @@ Agent(
 | 9 | `hara-stage3ar` | Stage3 context + Stage3A JSON | `output/<RUN_ID>_stage3a_<MF_ID>_review.json` | 场景语义评审通过 |
 | 10 | `hara-stage3b` | Stage3 context + Stage3A JSON | `output/<RUN_ID>_stage3b_<MF_ID>_sec.json` | 验证 stage3b |
 | 11 | `hara-stage3br` | Stage3A JSON + Stage3B SEC JSON | `output/<RUN_ID>_stage3b_<MF_ID>_review.json` | SEC 语义评审通过 |
-| 12 | `merge_stage3.py` | Stage 3A + Stage 3B | `output/<RUN_ID>_stage3_<MF_ID>_hara.json` | 验证 stage3 |
-| 13 | `apply_asil_matrix.py` | 合并后的 Stage 3 HARA | 更新 Stage 3 HARA | ASIL 已同步并重新验证 stage3 |
-| 14 | `hara-stage4` | 所有 Stage 3 HARA 文件 | `output/<RUN_ID>_stage4_sg_sum.json` | 验证 stage4 |
-| 15 | `hara-stage4r` | Stage 3 HARA + Stage 4 JSON | `output/<RUN_ID>_stage4_review.json` | 必须通过 |
-| 16 | 合并/导出工具 | 所有阶段输出 | `output/<RUN_ID>.json`、`.xlsx` | 最终验证与导出 |
+| 12 | `merge_stage3.py` + `check_stage_json.py` | Stage 3A + Stage 3B | `output/<RUN_ID>_stage3_<MF_ID>_hara.json` | 验证 stage3 + ASIL 一致性 |
+| 13 | `hara-stage4` | 所有 Stage 3 HARA 文件 | `output/<RUN_ID>_stage4_sg_sum.json` | 同一 MF 内按安全目标汇总 + 操作模式已填写 |
+| 14 | `hara-stage4r` | Stage 4 JSON + 必要 HARA 来源行 | `output/<RUN_ID>_stage4_review.json` | 操作模式评审通过 |
+| 15 | 合并/导出工具 | 所有阶段输出 | `output/<RUN_ID>.json`、`.xlsx` | 最终验证与导出 |
 
 ## 编排步骤
 
@@ -128,14 +127,14 @@ Agent(
 10. 对每个 `MF_ID` 创建独立 Stage3A worker；Stage3A 机器校验通过后，创建对应 Stage3AR worker。Stage3AR 不通过则修正或重跑 Stage3A。
 11. Stage3AR 通过后，再为对应 `MF_ID` 创建 Stage3B worker。Stage3B worker 内部仍必须使用真实子 agent 处理 S/E/C、Safety、FTTI 子任务；它不得在自己的总控上下文里做分维度评级。
 12. Stage3B 机器校验通过后，创建 Stage3BR worker；Stage3BR 不通过则重跑对应 Stage3B 维度 batch 并重新合并 SEC。
-13. Stage3BR 通过后，合并每个 MF 的 Stage3A/3B，并运行 `check_stage_json.py --stage stage3 --fix` 作为合并后门禁。
-14. 所有 MF 的 Stage3 合并校验通过后，统一执行 `apply_asil_matrix.py`，再重新运行 `check_stage_json.py --stage stage3`，随后启动 Stage4 和 Stage4R。
+13. Stage3BR 通过后，合并每个 MF 的 Stage3A/3B，并运行 `check_stage_json.py --stage stage3 --fix` 作为合并后门禁；ASIL 不一致必须回到 Stage3B 修正，不再调用 `apply_asil_matrix.py` 自动覆盖。
+14. 所有 MF 的 Stage3 合并校验通过后，启动 Stage4 和 Stage4R。
 15. 最后执行合并与 Excel 导出，并返回简洁状态摘要。
 
 ## 并行策略
 
 - 可并行：不同 `Function_ID` 的 Stage1/Stage1R/Stage2/Stage2R；不同 `MF_ID` 的 Stage3A/Stage3AR/Stage3B/Stage3BR；Stage3B 内同一批次的 S/E/C 子任务；Safety 和 FTTI 子任务。
-- 不可并行跨越门禁：Stage1 必须等 Stage0R 通过；Stage2 必须等 Stage1R 通过；Stage3A 必须等 Stage2R 通过；同一 MF 的 Stage3B 必须等 Stage3AR 通过；同一 MF 的 Stage3 合并必须等 Stage3BR 通过；Stage4 必须等所有 Stage3 HARA 完成 ASIL 同步并通过 `--stage stage3`。
+- 不可并行跨越门禁：Stage1 必须等 Stage0R 通过；Stage2 必须等 Stage1R 通过；Stage3A 必须等 Stage2R 通过；同一 MF 的 Stage3B 必须等 Stage3AR 通过；同一 MF 的 Stage3 合并必须等 Stage3BR 通过；Stage4 必须等所有 Stage3 HARA 通过 `--stage stage3`。
 - 并行时也必须创建多个真实 worker。一个 worker 只负责一个 stage、一个 `MF_ID` 或一个批次维度输出文件。
 
 ## 门禁规则
@@ -165,16 +164,16 @@ python tools/hara/prepare_stage3_context.py sec-batches --context output/<RUN_ID
 python tools/hara/prepare_stage3_context.py stage3b-review-batches --context output/<RUN_ID>_stage3_context_<MF_ID>.json --stage3a output/<RUN_ID>_stage3a_<MF_ID>_scenarios.json --stage3b output/<RUN_ID>_stage3b_<MF_ID>_sec.json --mf-id <MF_ID> --prefix <RUN_ID> --out-dir output --batch-size 5
 python tools/hara/merge_stage3.py --stage3a output/<RUN_ID>_stage3a_<MF_ID>_scenarios.json --stage3b output/<RUN_ID>_stage3b_<MF_ID>_sec.json --output output/<RUN_ID>_stage3_<MF_ID>_hara.json
 python tools/hara/check_stage_json.py --stage stage3 --json output/<RUN_ID>_stage3_<MF_ID>_hara.json --stage2 output/<RUN_ID>_stage2_mf_vehicle_hazards.json --mf-id <MF_ID> --operation-scenarios knowledge-base/automotive/hara/common/operation_scenarios.json --min-scenarios 10 --max-scenarios 20 --fix
-python tools/hara/apply_asil_matrix.py --input output/<RUN_ID>_stage3_<MF_ID>_hara.json --output output/<RUN_ID>_stage3_<MF_ID>_hara.json
-python tools/hara/check_stage_json.py --stage stage3 --json output/<RUN_ID>_stage3_<MF_ID>_hara.json --stage2 output/<RUN_ID>_stage2_mf_vehicle_hazards.json --mf-id <MF_ID> --operation-scenarios knowledge-base/automotive/hara/common/operation_scenarios.json --min-scenarios 10 --max-scenarios 20
 python tools/hara/generate_stage4_sg.py --stage-dir output --prefix <RUN_ID> --out output/<RUN_ID>_stage4_sg_sum.json
+python tools/hara/hara_stage_merge.py --stage-dir output --prefix <RUN_ID> --out output/<RUN_ID>_before_stage4_check.json
+python tools/hara/check_stage_json.py --stage stage4 --json output/<RUN_ID>_stage4_sg_sum.json --hara output/<RUN_ID>_before_stage4_check.json --fix
 python tools/hara/hara_stage_merge.py --stage-dir output --prefix <RUN_ID> --out output/<RUN_ID>.json
 python tools/hara/run_hara_export.py --json output/<RUN_ID>.json --out output/<RUN_ID>.xlsx --mode basic
 ```
 
 ## 引用文件
 
-- 只有在验证、合并、ASIL 同步或导出时，读取 `references/validation-export.md`。
+- 只有在验证、合并、ASIL 校验或导出时，读取 `references/validation-export.md`。
 - 只有在调整多 agent 架构时，读取 `references/architecture.md`。
 - 只有在用户询问测试或中间阶段恢复时，读取 `references/testing-guide.md`。
 - 只有在跨阶段结构契约问题时，读取 `references/json-contracts.md`；单阶段结构契约优先读对应 stage 的窄契约。

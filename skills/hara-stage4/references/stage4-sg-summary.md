@@ -1,37 +1,72 @@
 # Stage 4: SG_Sum 汇总
 
-目标：基于 ASIL 工具校验后的 HARA 数据生成安全目标汇总。
+本文件只定义 Stage4 工具派生和 `操作模式` 填写规则。字段结构见 `json-contracts.md`。
 
-Stage 4 必须使用工具确定 MF 覆盖范围和 ASIL Level，不要让大模型自行计算或重建 ASIL。大模型可以参与安全目标/安全状态文字评审，但不能覆盖工具给出的 `MF_ID`、`ASIL Level`、QM 排除结果。
+## 派生边界
 
-## 需要读取
+`generate_stage4_sg.py` 从已通过 Stage3 校验的 HARA 中，在同一 `MF_ID` 内按相同 `安全目标` 汇总非 QM 场景，并派生以下字段：
 
-- 已完成 ASIL 校验的所有 Stage 3 HARA 文件
-- `knowledge-base/automotive/hara/common/05-safety_goal.md`
-- `references/json-contracts.md`
+- `SG_No`
+- `MF_ID`
+- `安全目标`
+- `ASIL Level`
+- `安全状态`
+- `FTTI(ms)`
+- `Comments`
 
-## 生成方式
+汇总规则：
 
-所有 Stage 3R review 完成后，先统一运行 `apply_asil_matrix.py` 修正 HARA。然后用工具生成 Stage 4：
+- 同一 `MF_ID` 内相同 `安全目标` 只生成一条 SG_Sum。
+- 不同 `MF_ID` 即使安全目标文字相同，也分别生成 SG_Sum。
+- `MF_ID` 保持单个当前 MF，例如 `MF001`。
+- `ASIL Level` 取该 MF/安全目标组合内所有非 QM HARA 场景中的最高值。
+- `FTTI(ms)` 取该 MF/安全目标组合内所有非 QM HARA 场景中的最小数值。
+- `安全状态` 和 `Comments` 由工具从代表场景和分组证据派生。
+
+大模型只填写 `操作模式`。不要让模型重新计算 ASIL、筛选 MF、改写安全目标或安全状态。
+
+## 生成命令
 
 ```text
 python tools/hara/generate_stage4_sg.py --stage-dir output --prefix <run_id> --out output/<run_id>_stage4_sg_sum.json
 ```
 
-不要手写 `ASIL Level`。例如 `S3+E1+C3` 后缀求和为 `7`，结果是 `A`，不是 `D`。
+工具会把 `操作模式` 置为 `待Stage4模型填写`，并在 `Comments` 中写入来源 `List_No` 和场景证据。
 
-## 规则
+## 操作模式填写
 
-1. 每个 MF 选择最高 ASIL 场景作为 SG_Sum 依据，ASIL 排序为 `QM < A < B < C < D`。
-2. `sg_sum` 每行必须包含 `MF_ID`，用于追溯对应功能故障。
-3. 如果某个 MF 的最高 ASIL 为 `QM`，该 MF 在 `sg_sum` 中不得出现任何条目；不要生成空白安全目标行，也不要用 `QM` 行占位。
-4. 只有最高 ASIL 为 `A/B/C/D` 的 MF 才生成 SG_Sum 条目。
-5. 如果多个场景最高 ASIL 相同，选择危害事件和安全目标表达最完整、最能代表该 MF 风险的场景。
-6. 安全目标、安全状态和 FTTI 必须来自或符合 Stage 3 已校验场景，不能与故障类型冲突。
+根据 `Comments` 中的车辆状态、道路类型、道路条件、驾驶员是否在车上和危害事件，归纳当前安全目标适用的操作模式。
 
-Stage 4 写入后，先合并临时 JSON 再检查。若 SG_Sum 的 `ASIL Level` 与 HARA 最高 ASIL 不一致，检查必须失败，不能进入 Stage 4R：
+推荐写法：
+
+- `驻车保持模式`
+- `坡道起步模式`
+- `低速泊车模式`
+- `行驶制动控制模式`
+- `驾驶员请求驻车/释放模式`
+
+避免写法：
+
+- `待填写`、`nan`
+- `正常运行模式`
+- 直接复制完整 `Comments`
+- 把多个互斥场景堆在一个长句里
+
+## 校验
+
+填写完成后运行：
 
 ```text
 python tools/hara/hara_stage_merge.py --stage-dir output --prefix <run_id> --out output/<run_id>_before_stage4_check.json
 python tools/hara/check_stage_json.py --stage stage4 --json output/<run_id>_stage4_sg_sum.json --hara output/<run_id>_before_stage4_check.json --fix
 ```
+
+`check_stage_json.py --stage stage4` 会检查：
+
+- 同一 `MF_ID` 内相同 `安全目标` 没有重复 SG_Sum。
+- `ASIL Level` 等于该 MF/安全目标组合在 HARA 中的最高 ASIL。
+- `FTTI(ms)` 等于该 MF/安全目标组合在 HARA 中的最小 FTTI。
+- 非 QM 的 MF/安全目标组合不缺失，QM-only 组合不进入 `sg_sum`。
+- `操作模式` 不能是空值或占位值。
+
+最终 `validate_hara_json.py` 会重建派生字段，但会保留已填写的 `操作模式`。

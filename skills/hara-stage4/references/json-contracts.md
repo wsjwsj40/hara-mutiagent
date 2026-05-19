@@ -2,42 +2,34 @@
 
 所有阶段文件必须是 UTF-8 JSON object。不要输出 Markdown 表格、代码围栏、额外说明文本或数组作为顶层结构。
 
-## 完整输出 Schema（严格遵循）
+## 输出 Schema
 
 ```json
 {
   "meta": {
     "run_id": "<RUN_ID>",
     "stage": "stage4",
-    "generated_at": "ISO时间戳",
-    "source_files": [
-      "output/<RUN_ID>_stage3_<MF_ID>_hara.json"
-    ],
-    "knowledge_files_used": []
+    "source": "output 或合并 JSON 路径",
+    "generation": "deterministic_group_by_mf_and_safety_goal_highest_asil_min_ftti_except_operation_mode",
+    "operation_mode_policy": "only 操作模式 is model-filled; rows are grouped within each MF by safety goal with highest ASIL and minimum FTTI"
   },
   "sg_sum": [
     {
-      "SG_No": 1,
+      "SG_No": "SG001",
       "MF_ID": "MF001",
-      "安全目标": "<继承最高ASIL路径的安全目标>",
+      "安全目标": "<工具按同一 MF 内相同安全目标汇总>",
       "ASIL Level": "A/B/C/D",
-      "安全状态": "<继承或归纳的安全状态>",
-      "操作模式": "<适用操作模式>",
-      "FTTI(ms)": 1000,
-      "Comments": "<备注或空字符串>"
+      "安全状态": "<工具从代表 HARA 场景继承>",
+      "操作模式": "<模型填写>",
+      "FTTI(ms)": "<同一 MF/安全目标组合的最小 FTTI>",
+      "Comments": "<工具生成的分组和来源场景证据>"
     }
   ],
   "review_log": []
 }
 ```
 
-## 本阶段文件
-
-文件：`output/<run_id>_stage4_sg_sum.json`
-
-只允许顶层 key：`meta`、`sg_sum`、`review_log`。
-
-### sg_sum 固定列
+## 固定列
 
 - `SG_No`
 - `MF_ID`
@@ -48,6 +40,11 @@
 - `FTTI(ms)`
 - `Comments`
 
-### QM 规则
+## 约束
 
-如果某个 MF 的最高 ASIL 为 `QM`，该 MF 在 `sg_sum` 中不得出现任何条目。
+- 同一 `MF_ID` 内相同 `安全目标` 只能有一条 SG_Sum；不同 MF 不合并。
+- 仅由 `QM` 场景组成的 MF/安全目标组合不得出现在 `sg_sum`。
+- `ASIL Level` 必须等于该 MF/安全目标组合在 HARA 中的最高 ASIL。
+- `FTTI(ms)` 必须等于该 MF/安全目标组合在 HARA 中的最小 FTTI。
+- 除 `操作模式` 外，其他列由工具派生，不由模型改写。
+- `操作模式` 必须是具体模式名，不能是 `nan`、空值、`待Stage4模型填写`、`待填写`、`待补充` 或 `待生成`。

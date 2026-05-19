@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -206,69 +207,152 @@ def correct_hara_asil(normalized: dict[str, Any]) -> list[dict[str, Any]]:
     return warnings
 
 
+OPERATION_MODE_PLACEHOLDER = "待Stage4模型填写"
+
+
+def is_operation_mode_placeholder(value: Any) -> bool:
+    text = str(value or "").strip()
+    return is_nan_like(text) or text in {
+        OPERATION_MODE_PLACEHOLDER,
+        "待填写",
+        "待补充",
+        "待生成",
+        "TODO",
+        "todo",
+    }
+
+
 def operation_mode_from_hara(row: dict[str, Any]) -> str:
-    parts = [
-        row.get("车辆状态"),
-        row.get("道路类型"),
-        row.get("道路条件"),
-        row.get("附加条件"),
-    ]
-    values = [str(part).strip() for part in parts if not is_nan_like(part)]
-    return " / ".join(values[:4]) if values else "nan"
+    """Return the Stage 4 placeholder.
+
+    操作模式需要结合功能意图和最高风险场景做语义归纳；不要在确定性
+    HARA/SG_Sum 重建里用场景字段机械拼接覆盖模型填写结果。
+    """
+    return OPERATION_MODE_PLACEHOLDER
 
 
 def hara_row_quality(row: dict[str, Any]) -> int:
     score = 0
-    for field in ("安全目标", "安全状态", "FTTI(ms)", "危害事件", "操作模式"):
+    for field in ("安全目标", "安全状态", "FTTI(ms)", "危害事件"):
         if not is_nan_like(row.get(field)):
             score += 1
     return score
 
 
-def best_hara_rows_by_mf(hara_rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    best: dict[str, dict[str, Any]] = {}
-    for row in hara_rows:
-        mf_id = str(row.get("MF_ID") or "").strip()
-        asil = normalize_asil(row.get("结果ASIL"))
-        if not mf_id or asil is None:
-            continue
-        current = best.get(mf_id)
-        if current is None:
-            best[mf_id] = row
-            continue
-        current_asil = normalize_asil(current.get("结果ASIL")) or "QM"
-        if ASIL_ORDER[asil] > ASIL_ORDER[current_asil]:
-            best[mf_id] = row
-        elif ASIL_ORDER[asil] == ASIL_ORDER[current_asil] and hara_row_quality(row) > hara_row_quality(current):
-            best[mf_id] = row
-    return best
+def safety_goal_from_hara(row: dict[str, Any]) -> str:
+    value = row.get("安全目标")
+    return str(value).strip() if not is_nan_like(value) else default_safety_goal(row)
 
 
-def sg_from_hara_row(mf_id: str, hara_row: dict[str, Any], sg_no: str) -> dict[str, Any]:
-    asil = normalize_asil(hara_row.get("结果ASIL")) or "QM"
+def normalize_safety_goal_key(value: Any) -> str:
+    if is_nan_like(value):
+        return ""
+    return re.sub(r"\s+", "", str(value).strip())
+
+
+def parse_ftti_ms(value: Any) -> float | None:
+    if is_nan_like(value):
+        return None
+    match = re.search(r"\d+(?:\.\d+)?", str(value))
+    return float(match.group(0)) if match else None
+
+
+def min_ftti_value(rows: list[dict[str, Any]]) -> str:
+    best_value: Any = None
+    best_number: float | None = None
+    for row in rows:
+        value = row.get("FTTI(ms)")
+        number = parse_ftti_ms(value)
+        if number is None:
+            continue
+        if best_number is None or number < best_number:
+            best_number = number
+            best_value = value
+    if best_number is None:
+        for row in rows:
+            value = row.get("FTTI(ms)")
+            if not is_nan_like(value):
+                return str(value).strip()
+        return "nan"
+    return str(best_value).strip()
+
+
+def first_mf_id(rows: list[dict[str, Any]]) -> str:
+    mf_ids = sorted({str(row.get("MF_ID") or "").strip() for row in rows if str(row.get("MF_ID") or "").strip()})
+    return mf_ids[0] if mf_ids else ""
+
+
+def sg_group_key(mf_id: str, safety_goal: Any) -> str:
+    return f"{mf_id}\0{normalize_safety_goal_key(safety_goal)}"
+
+
+def representative_hara_row(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    def ftti_rank(row: dict[str, Any]) -> float:
+        value = parse_ftti_ms(row.get("FTTI(ms)"))
+        return value if value is not None else 10**12
+
+    return max(
+        rows,
+        key=lambda row: (
+            ASIL_ORDER.get(normalize_asil(row.get("结果ASIL")) or "QM", 0),
+            hara_row_quality(row),
+            -ftti_rank(row),
+        ),
+    )
+
+
+def sg_from_hara_group(safety_goal: str, hara_rows: list[dict[str, Any]], sg_no: str) -> dict[str, Any]:
+    representative = representative_hara_row(hara_rows)
+    highest_asil = max((normalize_asil(row.get("结果ASIL")) or "QM" for row in hara_rows), key=lambda asil: ASIL_ORDER[asil])
+    mf_id = first_mf_id(hara_rows)
+    min_ftti = min_ftti_value(hara_rows)
     return {
         "SG_No": sg_no,
         "MF_ID": mf_id,
-        "安全目标": hara_row.get("安全目标") if not is_nan_like(hara_row.get("安全目标")) else default_safety_goal(hara_row),
-        "ASIL Level": asil,
-        "安全状态": hara_row.get("安全状态") if not is_nan_like(hara_row.get("安全状态")) else default_safe_state(hara_row),
-        "操作模式": operation_mode_from_hara(hara_row),
-        "FTTI(ms)": hara_row.get("FTTI(ms)") if not is_nan_like(hara_row.get("FTTI(ms)")) else "nan",
-        "Comments": f"自动基于 {mf_id} 的最高 ASIL 场景生成，来源 List_No={hara_row.get('List_No', 'nan')}。",
+        "安全目标": safety_goal,
+        "ASIL Level": highest_asil,
+        "安全状态": representative.get("安全状态") if not is_nan_like(representative.get("安全状态")) else default_safe_state(representative),
+        "操作模式": operation_mode_from_hara(representative),
+        "FTTI(ms)": min_ftti,
+        "Comments": (
+            f"自动基于 MF_ID={mf_id} 中相同安全目标汇总；"
+            f"ASIL Level 取最高={highest_asil}；FTTI(ms) 取最小={min_ftti}；"
+            f"代表场景 List_No={representative.get('List_No', 'nan')}；"
+            f"操作模式参考：车辆状态={representative.get('车辆状态', 'nan')}，"
+            f"道路类型={representative.get('道路类型', 'nan')}，"
+            f"道路条件={representative.get('道路条件', 'nan')}，"
+            f"驾驶员是否在车上={representative.get('驾驶员是否在车上', 'nan')}，"
+            f"危害事件={representative.get('危害事件', 'nan')}。"
+        ),
     }
 
 
 def correct_sg_sum(normalized: dict[str, Any]) -> list[dict[str, Any]]:
     """Rebuild SG_Sum from corrected HARA rows.
 
-    QM-only MF entries are removed. Non-QM MF entries are always regenerated
-    from the highest ASIL HARA scenario, so Excel export stays correct even if
-    Stage 4 model output was incomplete, stale, or contained placeholder QM rows.
+    QM rows are removed. Non-QM rows are grouped by MF_ID and identical safety
+    goal: ASIL Level takes the highest ASIL in that MF/goal group and FTTI(ms)
+    takes the smallest numeric FTTI in that MF/goal group.
     """
     warnings: list[dict[str, Any]] = []
     hara_rows = normalized.get("HARA", []) or []
-    best_by_mf = best_hara_rows_by_mf(hara_rows)
-    if not best_by_mf:
+    groups_by_mf_goal: dict[str, dict[str, Any]] = {}
+    for row in hara_rows:
+        asil = normalize_asil(row.get("结果ASIL"))
+        if asil is None or asil == "QM":
+            continue
+        mf_id = str(row.get("MF_ID") or "").strip()
+        if not mf_id:
+            continue
+        safety_goal = safety_goal_from_hara(row)
+        goal_key = normalize_safety_goal_key(safety_goal)
+        if not goal_key:
+            continue
+        key = sg_group_key(mf_id, safety_goal)
+        group = groups_by_mf_goal.setdefault(key, {"MF_ID": mf_id, "安全目标": safety_goal, "rows": []})
+        group["rows"].append(row)
+
+    if not groups_by_mf_goal:
         warnings.append({
             "level": "WARNING",
             "stage": "sg_sum_auto_fix",
@@ -277,76 +361,78 @@ def correct_sg_sum(normalized: dict[str, Any]) -> list[dict[str, Any]]:
         })
         return warnings
 
-    existing_mf_ids: set[str] = set()
+    existing_group_keys: set[str] = set()
+    existing_by_group: dict[str, dict[str, Any]] = {}
     seen_existing: set[str] = set()
     for index, row in enumerate(normalized.get("SG_Sum", []) or [], start=1):
         mf_id = str(row.get("MF_ID") or "").strip()
-        if not mf_id:
+        safety_goal = str(row.get("安全目标") or "").strip()
+        group_key = sg_group_key(mf_id, safety_goal) if mf_id else ""
+        if not group_key or not normalize_safety_goal_key(safety_goal):
             warnings.append({
                 "level": "WARNING",
                 "stage": "sg_sum_auto_fix",
                 "sheet": "SG_Sum",
                 "row": index,
-                "message": "SG_Sum 行缺少 MF_ID，已丢弃并由 HARA 最高 ASIL 场景自动重建。",
+                "message": "SG_Sum 行缺少 MF_ID 或安全目标，已丢弃并按 HARA 的 MF_ID + 安全目标自动重建。",
             })
             continue
-        if mf_id in seen_existing:
-            warnings.append({
-                "level": "WARNING",
-                "stage": "sg_sum_auto_fix",
-                "sheet": "SG_Sum",
-                "row": index,
-                "MF_ID": mf_id,
-                "message": "同一 MF_ID 存在重复 SG_Sum 条目，最终 SG_Sum 已按 HARA 最高 ASIL 场景重建并去重。",
-            })
-            continue
-        seen_existing.add(mf_id)
-        best_hara = best_by_mf.get(mf_id)
-        if best_hara is None:
+        if group_key in seen_existing:
             warnings.append({
                 "level": "WARNING",
                 "stage": "sg_sum_auto_fix",
                 "sheet": "SG_Sum",
                 "row": index,
                 "MF_ID": mf_id,
-                "message": "SG_Sum 引用了 HARA 中不存在的 MF_ID，已丢弃。",
+                "安全目标": safety_goal,
+                "message": "同一 MF_ID 内同一安全目标存在重复 SG_Sum 条目，最终 SG_Sum 已按 MF_ID + 安全目标汇总并去重。",
             })
             continue
-        highest_asil = normalize_asil(best_hara.get("结果ASIL")) or "QM"
-        if highest_asil == "QM":
+        seen_existing.add(group_key)
+        if group_key not in groups_by_mf_goal:
             warnings.append({
                 "level": "WARNING",
                 "stage": "sg_sum_auto_fix",
                 "sheet": "SG_Sum",
                 "row": index,
                 "MF_ID": mf_id,
-                "message": "该 MF 最高 ASIL 为 QM，SG_Sum 条目已自动删除。",
+                "安全目标": safety_goal,
+                "message": "SG_Sum 引用了 HARA 非 QM 行中不存在的 MF_ID + 安全目标组合，已丢弃。",
             })
             continue
-        existing_mf_ids.add(mf_id)
+        existing_group_keys.add(group_key)
+        existing_by_group[group_key] = row
 
     corrected: list[dict[str, Any]] = []
-    for mf_id in sorted(best_by_mf):
-        best_hara = best_by_mf[mf_id]
-        highest_asil = normalize_asil(best_hara.get("结果ASIL")) or "QM"
-        if highest_asil == "QM":
-            continue
-        row = sg_from_hara_row(mf_id, best_hara, "pending")
-        if mf_id not in existing_mf_ids:
+    sorted_groups = sorted(
+        groups_by_mf_goal.items(),
+        key=lambda item: (
+            item[1]["MF_ID"],
+            item[0],
+        ),
+    )
+    for group_key, group in sorted_groups:
+        row = sg_from_hara_group(group["安全目标"], group["rows"], "pending")
+        existing = existing_by_group.get(group_key)
+        if existing and not is_operation_mode_placeholder(existing.get("操作模式")):
+            row["操作模式"] = existing.get("操作模式")
+        if group_key not in existing_group_keys:
             warnings.append({
                 "level": "WARNING",
                 "stage": "sg_sum_auto_fix",
                 "sheet": "SG_Sum",
-                "MF_ID": mf_id,
-                "message": "非 QM MF 缺少 SG_Sum 条目，已根据 HARA 最高 ASIL 场景自动补齐。",
+                "MF_ID": group["MF_ID"],
+                "安全目标": group["安全目标"],
+                "message": "非 QM HARA 的 MF_ID + 安全目标缺少 SG_Sum 条目，已自动补齐。",
             })
         else:
             warnings.append({
                 "level": "WARNING",
                 "stage": "sg_sum_auto_fix",
                 "sheet": "SG_Sum",
-                "MF_ID": mf_id,
-                "message": "SG_Sum 条目已根据 HARA 最高 ASIL 场景自动重建，确保与最终 HARA 一致。",
+                "MF_ID": group["MF_ID"],
+                "安全目标": group["安全目标"],
+                "message": "SG_Sum 条目已按同一 MF_ID 内相同安全目标自动汇总；ASIL Level 取最高，FTTI(ms) 取最小。",
             })
         corrected.append(row)
 

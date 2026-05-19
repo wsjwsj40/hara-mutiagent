@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from hara_schema_columns import DERIVE_MF_COLUMNS, MF_VEHICLE_HAZARDS_COLUMNS, HARA_COLUMNS, SG_SUM_COLUMNS, get_by_alias, is_nan_like, normalize_rows
+    from hara_schema_columns import ALIASES, DERIVE_MF_COLUMNS, MF_VEHICLE_HAZARDS_COLUMNS, HARA_COLUMNS, SG_SUM_COLUMNS, get_by_alias, is_nan_like, normalize_rows
     from asil_matrix import ASIL_ORDER, asil_from_sec, normalize_asil, normalize_sec
 except ImportError:  # pragma: no cover
-    from .hara_schema_columns import DERIVE_MF_COLUMNS, MF_VEHICLE_HAZARDS_COLUMNS, HARA_COLUMNS, SG_SUM_COLUMNS, get_by_alias, is_nan_like, normalize_rows
+    from .hara_schema_columns import ALIASES, DERIVE_MF_COLUMNS, MF_VEHICLE_HAZARDS_COLUMNS, HARA_COLUMNS, SG_SUM_COLUMNS, get_by_alias, is_nan_like, normalize_rows
     from .asil_matrix import ASIL_ORDER, asil_from_sec, normalize_asil, normalize_sec
 
 STAGE1_GUIDE_COLUMNS = ["功能丧失", "过大", "过早", "过小", "过晚", "非预期激活", "卡滞", "方向错误"]
@@ -23,6 +23,10 @@ STAGE1_MERGED_FAULT_FIELDS = ["过大/过早", "过小/过晚"]
 STAGE1_MULTI_EFFECT_MARKERS = ["或", "以及", "同时", "；", ";"]
 STAGE2_TRACE_COLUMNS = ["Function_ID", "source_function_name", "Stage1_Row", "Fault_Field", "Stage1_Fault_Text"]
 STAGE3_ENUM_FIELDS = HARA_COLUMNS[4:10]
+SEC_S_FIELD = "Severity 'S'"
+SEC_E_FIELD = "暴露频率'E'"
+SEC_C_FIELD = "控制能力 'C'"
+ASIL_FIELD = "结果ASIL"
 
 # Stage 3A scenarios columns (场景字段 + 危害事件 + scenario_reasoning)
 SCENARIOS_COLUMNS = [
@@ -91,11 +95,42 @@ STAGE3B_REASONING_REQUIRED_FIELDS = {
     "C评级推理": ["感知来源", "反应时间", "可用操作", "空间约束", "参考规则", "C等级", "C理由"],
 }
 STAGE3B_LEVEL_FIELDS = [
-    ("Severity 'S'", "S评级推理", "S等级", "S"),
-    ("暴露频率'E'", "E评级推理", "E等级", "E"),
-    ("控制能力 'C'", "C评级推理", "C等级", "C"),
+    (SEC_S_FIELD, "S评级推理", "S等级", "S"),
+    (SEC_E_FIELD, "E评级推理", "E等级", "E"),
+    (SEC_C_FIELD, "C评级推理", "C等级", "C"),
 ]
 STAGE3B_FORBIDDEN_RECORD_FIELDS = set(SCENARIOS_COLUMNS) - {"List_No"}
+OPERATION_MODE_PLACEHOLDERS = {"待Stage4模型填写", "待填写", "待补充", "待生成", "TODO", "todo"}
+WHITESPACE_RE = re.compile(r"[\s\u3000]+")
+
+
+def normalize_whitespace(value: Any) -> Any:
+    """Trim and collapse redundant whitespace without changing JSON shape."""
+    if isinstance(value, str):
+        return WHITESPACE_RE.sub(" ", value).strip()
+    if isinstance(value, list):
+        return [normalize_whitespace(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            normalize_whitespace(key) if isinstance(key, str) else key: normalize_whitespace(item)
+            for key, item in value.items()
+        }
+    return value
+
+
+def compact_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return WHITESPACE_RE.sub("", str(value)).strip()
+
+
+def text_equal_ignoring_space(left: Any, right: Any) -> bool:
+    return compact_text(left) == compact_text(right)
+
+
+def text_in_ignoring_space(value: Any, choices: set[str]) -> bool:
+    normalized = compact_text(value)
+    return normalized in {compact_text(choice) for choice in choices}
 
 
 def load_json(path: Path) -> Any:
@@ -117,8 +152,12 @@ def dump_json(data: Any, path: Path) -> None:
 
 
 def rows(data: Any, key: str) -> list[dict[str, Any]]:
-    if isinstance(data, dict) and isinstance(data.get(key), list):
-        return [item for item in data[key] if isinstance(item, dict)]
+    if isinstance(data, dict):
+        value = data.get(key)
+        if value is None:
+            value = get_by_compact_key(data, key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
     return []
 
 
@@ -146,6 +185,14 @@ def check_required(rows_: list[dict[str, Any]], required: list[str], sheet: str,
             })
 
 
+def top_level_key_diff(data: dict[str, Any], allowed: set[str]) -> tuple[list[str], list[str]]:
+    allowed_compact = {compact_field_name(key) for key in allowed}
+    actual_compact = {compact_field_name(key) for key in data}
+    extra = sorted(key for key in data if compact_field_name(key) not in allowed_compact)
+    missing = sorted(key for key in allowed if compact_field_name(key) not in actual_compact)
+    return extra, missing
+
+
 def check_stage0(data: Any, errors: list[dict[str, Any]]) -> None:
     if not isinstance(data, dict):
         errors.append({"stage": "stage0", "error": "top_level_must_be_object"})
@@ -157,12 +204,20 @@ def check_stage0(data: Any, errors: list[dict[str, Any]]) -> None:
 
 
 def compact_field_name(value: Any) -> str:
-    return str(value).replace("\n", "").replace(" ", "").replace("　", "").strip()
+    return compact_text(value)
 
 
 def has_compact_key(row: dict[str, Any], expected: str) -> bool:
     expected_compact = compact_field_name(expected)
     return any(compact_field_name(key) == expected_compact for key in row)
+
+
+def get_by_compact_key(mapping: dict[str, Any], expected: str, default: Any = None) -> Any:
+    expected_compact = compact_field_name(expected)
+    for key, value in mapping.items():
+        if compact_field_name(key) == expected_compact:
+            return value
+    return default
 
 
 def parse_positive_int(value: Any) -> int | None:
@@ -190,14 +245,13 @@ def find_stage0_function(stage0: Any | None, function_id: str | None) -> dict[st
     if stage0 is None or not function_id:
         return None
     for row in rows(stage0, "function_mapping"):
-        if stage0_function_id(row) == function_id:
+        if text_equal_ignoring_space(stage0_function_id(row), function_id):
             return row
     return None
 
 
 def check_stage1_top_level(data: dict[str, Any], errors: list[dict[str, Any]], stage: str = "stage1") -> None:
-    extra = sorted(key for key in data.keys() if key not in STAGE1_TOP_LEVEL_KEYS)
-    missing = sorted(key for key in STAGE1_TOP_LEVEL_KEYS if key not in data)
+    extra, missing = top_level_key_diff(data, STAGE1_TOP_LEVEL_KEYS)
     if extra:
         errors.append({
             "stage": stage,
@@ -286,7 +340,7 @@ def check_stage1_derive_rows(
     for index, (stage0_row, stage1_row) in enumerate(zip(function_mapping, derive_mf), start=1):
         expected_name = stage0_function_name(stage0_row)
         actual_name = str(get_by_alias(stage1_row, "子功能") or "").strip()
-        if expected_name and actual_name != expected_name:
+        if expected_name and not text_equal_ignoring_space(actual_name, expected_name):
             errors.append({
                 "stage": stage,
                 "row": index,
@@ -304,7 +358,7 @@ def check_stage1_field_reasoning(
     auto_fix: bool = False,
     stage: str = "stage1",
 ) -> None:
-    reasoning = data.get("field_reasoning")
+    reasoning = get_by_compact_key(data, "field_reasoning")
     if not isinstance(reasoning, list):
         errors.append({
             "stage": stage,
@@ -322,13 +376,13 @@ def check_stage1_field_reasoning(
             })
             continue
 
-        row_no = parse_positive_int(entry.get("row"))
+        row_no = parse_positive_int(get_by_compact_key(entry, "row"))
         if row_no is None or row_no > len(derive_mf):
             errors.append({
                 "stage": stage,
                 "row": entry_index,
                 "error": "field_reasoning_row_invalid",
-                "actual": entry.get("row"),
+                "actual": get_by_compact_key(entry, "row"),
             })
             continue
         if row_no in seen_rows:
@@ -341,8 +395,8 @@ def check_stage1_field_reasoning(
 
         derive_row = derive_mf[row_no - 1]
         expected_name = str(get_by_alias(derive_row, "子功能") or "").strip()
-        actual_name = str(entry.get("子功能") or "").strip()
-        if expected_name and actual_name != expected_name:
+        actual_name = str(get_by_compact_key(entry, "子功能", "") or "").strip()
+        if expected_name and not text_equal_ignoring_space(actual_name, expected_name):
             errors.append({
                 "stage": stage,
                 "row": row_no,
@@ -351,7 +405,7 @@ def check_stage1_field_reasoning(
                 "actual": actual_name,
             })
 
-        field_reasoning = entry.get("字段推理")
+        field_reasoning = get_by_compact_key(entry, "字段推理")
         if not isinstance(field_reasoning, list):
             errors.append({
                 "stage": stage,
@@ -371,8 +425,12 @@ def check_stage1_field_reasoning(
                 })
                 continue
 
-            field = str(item.get("字段") or "").strip()
-            if field not in STAGE1_GUIDE_COLUMNS:
+            field = str(get_by_compact_key(item, "字段", "") or "").strip()
+            canonical_field = next(
+                (candidate for candidate in STAGE1_GUIDE_COLUMNS if text_equal_ignoring_space(field, candidate)),
+                "",
+            )
+            if not canonical_field:
                 errors.append({
                     "stage": stage,
                     "row": row_no,
@@ -382,6 +440,7 @@ def check_stage1_field_reasoning(
                     "allowed": STAGE1_GUIDE_COLUMNS,
                 })
                 continue
+            field = canonical_field
             if field in seen_fields:
                 errors.append({
                     "stage": stage,
@@ -391,7 +450,7 @@ def check_stage1_field_reasoning(
                 })
             seen_fields.add(field)
 
-            inference = item.get("推理")
+            inference = get_by_compact_key(item, "推理")
             if not isinstance(inference, dict):
                 errors.append({
                     "stage": stage,
@@ -404,7 +463,7 @@ def check_stage1_field_reasoning(
             missing_reasoning = [
                 required
                 for required in STAGE1_REASONING_FIELDS
-                if required not in inference or str(inference.get(required) or "").strip() == ""
+                if not has_compact_key(inference, required) or str(get_by_compact_key(inference, required) or "").strip() == ""
             ]
             if missing_reasoning:
                 errors.append({
@@ -416,8 +475,8 @@ def check_stage1_field_reasoning(
                 })
                 continue
 
-            risk = str(inference.get("是否有安全风险") or "").strip()
-            if risk not in {"是", "否"}:
+            risk = str(get_by_compact_key(inference, "是否有安全风险", "") or "").strip()
+            if not text_in_ignoring_space(risk, {"是", "否"}):
                 errors.append({
                     "stage": stage,
                     "row": row_no,
@@ -428,8 +487,8 @@ def check_stage1_field_reasoning(
                 continue
 
             fault_value = get_by_alias(derive_row, field)
-            if risk == "是" and is_nan_like(fault_value):
-                replacement = str(inference.get("异常情况") or "").strip()
+            if text_equal_ignoring_space(risk, "是") and is_nan_like(fault_value):
+                replacement = str(get_by_compact_key(inference, "异常情况", "") or "").strip()
                 if auto_fix and replacement:
                     derive_row[field] = replacement
                     if warnings is not None:
@@ -449,7 +508,7 @@ def check_stage1_field_reasoning(
                     "field": field,
                     "error": "risk_yes_but_fault_is_nan",
                 })
-            elif risk == "否" and not is_nan_like(fault_value):
+            elif text_equal_ignoring_space(risk, "否") and not is_nan_like(fault_value):
                 if auto_fix:
                     derive_row[field] = "nan"
                     if warnings is not None:
@@ -537,10 +596,10 @@ def check_stage1_slice(
             "actual": len(rows(data, "field_reasoning")),
         })
 
-    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
-    meta_function_id = str(meta.get("function_id") or meta.get("Function_ID") or "").strip()
+    meta = get_by_compact_key(data, "meta") if isinstance(get_by_compact_key(data, "meta"), dict) else {}
+    meta_function_id = str(get_by_compact_key(meta, "function_id") or get_by_compact_key(meta, "Function_ID") or "").strip()
     effective_function_id = function_id or meta_function_id
-    if function_id and meta_function_id and function_id != meta_function_id:
+    if function_id and meta_function_id and not text_equal_ignoring_space(function_id, meta_function_id):
         errors.append({
             "stage": "stage1_slice",
             "error": "function_id_mismatch_with_meta",
@@ -621,11 +680,12 @@ def check_stage2(
         })
     for index, (hazard_row, reasoning_row) in enumerate(zip(hazards, reasoning), start=1):
         selected = ""
-        inference = reasoning_row.get("推理") if isinstance(reasoning_row.get("推理"), dict) else {}
+        inference_value = get_by_compact_key(reasoning_row, "推理")
+        inference = inference_value if isinstance(inference_value, dict) else {}
         if isinstance(inference, dict):
-            selected = str(inference.get("选择的危害") or "").strip()
+            selected = str(get_by_compact_key(inference, "选择的危害", "") or "").strip()
         hazard = str(get_by_alias(hazard_row, "整车级危害") or "").strip()
-        if selected and hazard and selected != hazard:
+        if selected and hazard and not text_equal_ignoring_space(selected, hazard):
             errors.append({
                 "stage": stage,
                 "row": index,
@@ -655,10 +715,10 @@ def check_stage2_slice(
         errors.append({"stage": "stage2_slice", "error": "top_level_must_be_object"})
         return
 
-    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
-    meta_function_id = str(meta.get("function_id") or meta.get("Function_ID") or "").strip()
+    meta = get_by_compact_key(data, "meta") if isinstance(get_by_compact_key(data, "meta"), dict) else {}
+    meta_function_id = str(get_by_compact_key(meta, "function_id") or get_by_compact_key(meta, "Function_ID") or "").strip()
     effective_function_id = function_id or meta_function_id
-    if function_id and meta_function_id and function_id != meta_function_id:
+    if function_id and meta_function_id and not text_equal_ignoring_space(function_id, meta_function_id):
         errors.append({
             "stage": "stage2_slice",
             "error": "function_id_mismatch_with_meta",
@@ -666,9 +726,10 @@ def check_stage2_slice(
             "actual": meta_function_id,
         })
 
-    stage1_meta = stage1.get("meta") if isinstance(stage1, dict) and isinstance(stage1.get("meta"), dict) else {}
-    stage1_function_id = str(stage1_meta.get("function_id") or stage1_meta.get("Function_ID") or "").strip()
-    if effective_function_id and stage1_function_id and effective_function_id != stage1_function_id:
+    stage1_meta_value = get_by_compact_key(stage1, "meta") if isinstance(stage1, dict) else None
+    stage1_meta = stage1_meta_value if isinstance(stage1_meta_value, dict) else {}
+    stage1_function_id = str(get_by_compact_key(stage1_meta, "function_id") or get_by_compact_key(stage1_meta, "Function_ID") or "").strip()
+    if effective_function_id and stage1_function_id and not text_equal_ignoring_space(effective_function_id, stage1_function_id):
         errors.append({
             "stage": "stage2_slice",
             "error": "function_id_mismatch_with_stage1_slice",
@@ -679,7 +740,7 @@ def check_stage2_slice(
     hazards = rows(data, "mf_vehicle_hazards")
     for index, row in enumerate(hazards, start=1):
         row_function_id = str(get_by_alias(row, "Function_ID") or "").strip()
-        if effective_function_id and row_function_id and row_function_id != effective_function_id:
+        if effective_function_id and row_function_id and not text_equal_ignoring_space(row_function_id, effective_function_id):
             errors.append({
                 "stage": "stage2_slice",
                 "row": index,
@@ -689,6 +750,38 @@ def check_stage2_slice(
             })
 
     check_stage2(data, stage1, errors, warnings, stage="stage2_slice", allow_empty=True)
+
+
+def check_asil_consistency(
+    row: dict[str, Any],
+    stage: str,
+    index: int,
+    errors: list[dict[str, Any]],
+) -> tuple[str | None, str | None]:
+    expected_asil = asil_from_sec(
+        get_by_compact_key(row, SEC_S_FIELD),
+        get_by_compact_key(row, SEC_E_FIELD),
+        get_by_compact_key(row, SEC_C_FIELD),
+    )
+    actual_asil = normalize_asil(get_by_compact_key(row, ASIL_FIELD))
+    if expected_asil is None:
+        errors.append({
+            "stage": stage,
+            "row": index,
+            "error": "asil_cannot_be_calculated_from_sec",
+            "S": get_by_compact_key(row, SEC_S_FIELD),
+            "E": get_by_compact_key(row, SEC_E_FIELD),
+            "C": get_by_compact_key(row, SEC_C_FIELD),
+        })
+    elif actual_asil != expected_asil:
+        errors.append({
+            "stage": stage,
+            "row": index,
+            "error": "asil_mismatch_with_sec",
+            "expected": expected_asil,
+            "actual": get_by_compact_key(row, ASIL_FIELD),
+        })
+    return expected_asil, actual_asil
 
 
 def check_stage3(data: Any, min_scenarios: int, max_scenarios: int, mf_id: str | None, errors: list[dict[str, Any]]) -> None:
@@ -702,8 +795,15 @@ def check_stage3(data: Any, min_scenarios: int, max_scenarios: int, mf_id: str |
             "actual": len(hara),
         })
     check_required(hara, HARA_COLUMNS, "stage3", errors)
+    for index, row in enumerate(hara, start=1):
+        check_asil_consistency(row, "stage3", index, errors)
     if mf_id:
-        other = sorted({str(row.get("MF_ID", "")).strip() for row in hara if str(row.get("MF_ID", "")).strip() != mf_id})
+        other = sorted({
+            str(row.get("MF_ID", "")).strip()
+            for row in hara
+            if str(row.get("MF_ID", "")).strip()
+            and not text_equal_ignoring_space(row.get("MF_ID"), mf_id)
+        })
         if other:
             errors.append({
                 "stage": "stage3",
@@ -717,20 +817,20 @@ def check_stage3_against_stage2(data: Any, stage2: Any | None, errors: list[dict
     if stage2 is None:
         return
     hazards = {
-        str(row.get("Milf_ID", "")).strip(): row
+        compact_text(row.get("Milf_ID")): row
         for row in rows(stage2, "mf_vehicle_hazards")
-        if str(row.get("Milf_ID", "")).strip()
+        if compact_text(row.get("Milf_ID"))
     }
     for index, row in enumerate(rows(data, "hara"), start=1):
         mf_id = str(row.get("MF_ID", "")).strip()
-        expected = hazards.get(mf_id)
+        expected = hazards.get(compact_text(mf_id))
         if expected is None:
             continue
         expected_fault = str(expected.get("故障描述", "")).strip()
         expected_hazard = str(expected.get("整车级危害", "")).strip()
         actual_fault = str(row.get("故障描述", "")).strip()
         actual_hazard = str(row.get("整车危害", "")).strip()
-        if expected_fault and actual_fault != expected_fault:
+        if expected_fault and not text_equal_ignoring_space(actual_fault, expected_fault):
             errors.append({
                 "stage": "stage3",
                 "row": index,
@@ -739,7 +839,7 @@ def check_stage3_against_stage2(data: Any, stage2: Any | None, errors: list[dict
                 "actual": actual_fault,
                 "expected": expected_fault,
             })
-        if expected_hazard and actual_hazard != expected_hazard:
+        if expected_hazard and not text_equal_ignoring_space(actual_hazard, expected_hazard):
             errors.append({
                 "stage": "stage3",
                 "row": index,
@@ -759,7 +859,7 @@ def check_stage3_operation_scenarios(data: Any, operation_scenarios: Any | None,
             if not isinstance(allowed, list):
                 continue
             value = str(row.get(field, "")).strip()
-            if value not in {str(item) for item in allowed}:
+            if not text_in_ignoring_space(value, {str(item) for item in allowed}):
                 errors.append({
                     "stage": "stage3",
                     "row": index,
@@ -774,23 +874,22 @@ def stage2_mf_lookup(stage2: Any | None) -> dict[str, dict[str, Any]]:
     if stage2 is None:
         return {}
     return {
-        str(get_by_alias(row, "Milf_ID") or "").strip(): row
+        compact_text(get_by_alias(row, "Milf_ID")): row
         for row in rows(stage2, "mf_vehicle_hazards")
-        if str(get_by_alias(row, "Milf_ID") or "").strip()
+        if compact_text(get_by_alias(row, "Milf_ID"))
     }
 
 
 def condition_is_not_applicable(value: Any) -> bool:
-    return str(value or "").strip().startswith("不涉及")
+    return compact_text(value).startswith(compact_text("不涉及"))
 
 
 def condition_is_related(value: Any) -> bool:
-    return str(value or "").strip().startswith("相关")
+    return compact_text(value).startswith(compact_text("相关"))
 
 
 def check_stage3a_top_level(data: dict[str, Any], errors: list[dict[str, Any]]) -> None:
-    extra = sorted(key for key in data.keys() if key not in STAGE3A_TOP_LEVEL_KEYS)
-    missing = sorted(key for key in STAGE3A_TOP_LEVEL_KEYS if key not in data)
+    extra, missing = top_level_key_diff(data, STAGE3A_TOP_LEVEL_KEYS)
     if extra:
         errors.append({"stage": "stage3a", "error": "unexpected_top_level_keys", "keys": extra})
     if missing:
@@ -798,20 +897,20 @@ def check_stage3a_top_level(data: dict[str, Any], errors: list[dict[str, Any]]) 
 
 
 def check_stage3a_meta(data: dict[str, Any], mf_id: str | None, errors: list[dict[str, Any]]) -> None:
-    meta = data.get("meta")
+    meta = get_by_compact_key(data, "meta")
     if not isinstance(meta, dict):
         errors.append({"stage": "stage3a", "error": "meta_must_be_object"})
         return
-    if str(meta.get("stage") or "").strip() != "stage3a":
+    if not text_equal_ignoring_space(get_by_compact_key(meta, "stage"), "stage3a"):
         errors.append({
             "stage": "stage3a",
             "error": "meta_stage_must_be_stage3a",
-            "actual": meta.get("stage"),
+            "actual": get_by_compact_key(meta, "stage"),
         })
-    meta_mf_id = str(meta.get("mf_id") or meta.get("MF_ID") or "").strip()
+    meta_mf_id = str(get_by_compact_key(meta, "mf_id") or get_by_compact_key(meta, "MF_ID") or "").strip()
     if not meta_mf_id:
         errors.append({"stage": "stage3a", "error": "meta_mf_id_required"})
-    elif mf_id and meta_mf_id != mf_id:
+    elif mf_id and not text_equal_ignoring_space(meta_mf_id, mf_id):
         errors.append({
             "stage": "stage3a",
             "error": "mf_id_mismatch_with_meta",
@@ -823,10 +922,10 @@ def check_stage3a_meta(data: dict[str, Any], mf_id: str | None, errors: list[dic
 def stage3a_effective_mf_id(data: dict[str, Any], mf_id: str | None) -> str | None:
     if mf_id:
         return mf_id
-    meta = data.get("meta")
+    meta = get_by_compact_key(data, "meta")
     if not isinstance(meta, dict):
         return None
-    meta_mf_id = str(meta.get("mf_id") or meta.get("MF_ID") or "").strip()
+    meta_mf_id = str(get_by_compact_key(meta, "mf_id") or get_by_compact_key(meta, "MF_ID") or "").strip()
     return meta_mf_id or None
 
 
@@ -838,7 +937,7 @@ def check_stage3a_against_stage2(
 ) -> None:
     if stage2 is None or not mf_id:
         return
-    expected = stage2_mf_lookup(stage2).get(mf_id)
+    expected = stage2_mf_lookup(stage2).get(compact_text(mf_id))
     if expected is None:
         errors.append({"stage": "stage3a", "error": "mf_id_not_found_in_stage2", "MF_ID": mf_id})
         return
@@ -847,7 +946,7 @@ def check_stage3a_against_stage2(
     for index, row in enumerate(scenarios, start=1):
         actual_fault = str(get_by_alias(row, "故障描述") or "").strip()
         actual_hazard = str(get_by_alias(row, "整车危害") or "").strip()
-        if expected_fault and actual_fault != expected_fault:
+        if expected_fault and not text_equal_ignoring_space(actual_fault, expected_fault):
             errors.append({
                 "stage": "stage3a",
                 "row": index,
@@ -856,7 +955,7 @@ def check_stage3a_against_stage2(
                 "expected": expected_fault,
                 "actual": actual_fault,
             })
-        if expected_hazard and actual_hazard != expected_hazard:
+        if expected_hazard and not text_equal_ignoring_space(actual_hazard, expected_hazard):
             errors.append({
                 "stage": "stage3a",
                 "row": index,
@@ -872,14 +971,14 @@ def check_stage3a_condition_consistency(
     errors: list[dict[str, Any]],
 ) -> None:
     for index, row in enumerate(scenarios, start=1):
-        reasoning = row.get("scenario_reasoning")
+        reasoning = get_by_compact_key(row, "scenario_reasoning")
         if not isinstance(reasoning, dict):
             continue
-        conditions = reasoning.get("场景条件相关性检查")
+        conditions = get_by_compact_key(reasoning, "场景条件相关性检查")
         if not isinstance(conditions, dict):
             continue
         for condition_field, scenario_field in STAGE3A_CONDITION_TO_SCENARIO_FIELD.items():
-            reasoning_text = str(conditions.get(condition_field, "")).strip()
+            reasoning_text = str(get_by_compact_key(conditions, condition_field, "")).strip()
             if not reasoning_text:
                 continue
             scenario_value = str(get_by_alias(row, scenario_field) or "").strip()
@@ -891,7 +990,7 @@ def check_stage3a_condition_consistency(
                     "field": condition_field,
                     "actual": reasoning_text,
                 })
-            if condition_is_not_applicable(reasoning_text) and scenario_value != "不涉及":
+            if condition_is_not_applicable(reasoning_text) and not text_equal_ignoring_space(scenario_value, "不涉及"):
                 errors.append({
                     "stage": "stage3a",
                     "row": index,
@@ -900,7 +999,7 @@ def check_stage3a_condition_consistency(
                     "actual": scenario_value,
                     "message": "该字段推理标记为不涉及，运行 --fix 可将场景字段规范化为 不涉及。",
                 })
-            if scenario_value == "不涉及" and not condition_is_not_applicable(reasoning_text):
+            if text_equal_ignoring_space(scenario_value, "不涉及") and not condition_is_not_applicable(reasoning_text):
                 errors.append({
                     "stage": "stage3a",
                     "row": index,
@@ -939,16 +1038,16 @@ def check_stage3a(
 
     check_required(scenarios, SCENARIOS_COLUMNS, "stage3a", errors)
 
-    if "max_asil_planning" not in data:
+    if not has_compact_key(data, "max_asil_planning"):
         errors.append({"stage": "stage3a", "error": "max_asil_planning_missing"})
     else:
-        planning = data.get("max_asil_planning")
+        planning = get_by_compact_key(data, "max_asil_planning")
         if not isinstance(planning, dict):
             errors.append({"stage": "stage3a", "error": "max_asil_planning_must_be_object"})
         else:
             for field in STAGE3A_PLANNING_FIELDS:
-                value = planning.get(field)
-                if field not in planning:
+                value = get_by_compact_key(planning, field)
+                if not has_compact_key(planning, field):
                     errors.append({
                         "stage": "stage3a",
                         "error": "max_asil_planning_missing_field",
@@ -968,7 +1067,12 @@ def check_stage3a(
                     })
 
     if effective_mf_id:
-        other = sorted({str(row.get("MF_ID", "")).strip() for row in scenarios if str(row.get("MF_ID", "")).strip() != effective_mf_id})
+        other = sorted({
+            str(row.get("MF_ID", "")).strip()
+            for row in scenarios
+            if str(row.get("MF_ID", "")).strip()
+            and not text_equal_ignoring_space(row.get("MF_ID"), effective_mf_id)
+        })
         if other:
             errors.append({
                 "stage": "stage3a",
@@ -989,7 +1093,7 @@ def check_stage3a(
             })
 
         driver_present = str(get_by_alias(row, "驾驶员是否在车上") or "").strip()
-        if driver_present and driver_present not in {"是", "否", "不涉及"}:
+        if driver_present and not text_in_ignoring_space(driver_present, {"是", "否", "不涉及"}):
             errors.append({
                 "stage": "stage3a",
                 "row": index,
@@ -997,7 +1101,7 @@ def check_stage3a(
                 "actual": driver_present,
             })
 
-        reasoning = row.get("scenario_reasoning")
+        reasoning = get_by_compact_key(row, "scenario_reasoning")
         if not reasoning or not isinstance(reasoning, dict):
             errors.append({
                 "stage": "stage3a",
@@ -1006,14 +1110,16 @@ def check_stage3a(
             })
             continue
         for field in STAGE3A_REASONING_FIELDS:
-            if field not in reasoning or (field != "场景条件相关性检查" and not str(reasoning.get(field) or "").strip()):
+            if not has_compact_key(reasoning, field) or (
+                field != "场景条件相关性检查" and not str(get_by_compact_key(reasoning, field) or "").strip()
+            ):
                 errors.append({
                     "stage": "stage3a",
                     "row": index,
                     "error": "scenario_reasoning_missing_field",
                     "field": field,
                 })
-        conditions = reasoning.get("场景条件相关性检查")
+        conditions = get_by_compact_key(reasoning, "场景条件相关性检查")
         if not conditions or not isinstance(conditions, dict):
             errors.append({
                 "stage": "stage3a",
@@ -1022,7 +1128,7 @@ def check_stage3a(
             })
         else:
             for field in STAGE3A_CONDITION_FIELDS:
-                if field not in conditions or not str(conditions.get(field) or "").strip():
+                if not has_compact_key(conditions, field) or not str(get_by_compact_key(conditions, field) or "").strip():
                     errors.append({
                         "stage": "stage3a",
                         "row": index,
@@ -1051,7 +1157,7 @@ def check_stage3a_operation_scenarios(data: Any, operation_scenarios: Any | None
         if isinstance(allowed_values, list):
             for val in allowed_values:
                 val_str = re.sub(r"\s+", "", str(val).strip())  # 规范化枚举值
-                if val_str and val_str not in ("ALL", "不涉及"):
+                if val_str and not text_in_ignoring_space(val_str, {"ALL", "不涉及"}):
                     # 如果值存在于多个字段，记录所有可能
                     if val_str in value_to_field:
                         value_to_field[val_str] += f", {field_name}"
@@ -1065,7 +1171,7 @@ def check_stage3a_operation_scenarios(data: Any, operation_scenarios: Any | None
                 continue
             value = str(row.get(field, "")).strip()
             # Allow "不涉及" and "ALL" as special values
-            if value in ("不涉及", "ALL", ""):
+            if not value or text_in_ignoring_space(value, {"不涉及", "ALL"}):
                 continue
 
             # 规范化：去除内部多余空格
@@ -1159,22 +1265,24 @@ def apply_scenario_enum_format_fixes(data: Any, operation_scenarios: Any | None)
     fixes: list[dict[str, Any]] = []
 
     # 构建允许值的集合（包含规范化后的版本）
-    allowed_sets: dict[str, set[str]] = {}
+    allowed_maps: dict[str, dict[str, str]] = {}
     for field in STAGE3A_ENUM_FIELDS:
         allowed = operation_scenarios.get(field)
         if isinstance(allowed, list):
-            # 同时存储原始值和规范化后的值
-            allowed_set = {str(item).strip() for item in allowed}
-            normalized_set = set()
+            # Store canonical enum values by their whitespace-insensitive key.
+            allowed_map: dict[str, str] = {}
             for item in allowed:
+                canonical = str(item).strip()
                 normalized, _ = normalize_scenario_value(str(item))
-                normalized_set.add(normalized)
-            allowed_sets[field] = allowed_set | normalized_set
+                for candidate in {canonical, normalized}:
+                    if candidate:
+                        allowed_map[compact_text(candidate)] = canonical
+            allowed_maps[field] = allowed_map
 
     for index, row in enumerate(scenarios, start=1):
         for field in STAGE3A_ENUM_FIELDS:
             current_value = row.get(field, "")
-            if not current_value or current_value in ("不涉及", "ALL"):
+            if not current_value or text_in_ignoring_space(current_value, {"不涉及", "ALL"}):
                 continue
 
             str_value = str(current_value).strip()
@@ -1182,22 +1290,20 @@ def apply_scenario_enum_format_fixes(data: Any, operation_scenarios: Any | None)
             # 尝试规范化
             normalized_value, fix_reasons = normalize_scenario_value(str_value)
 
-            if normalized_value == str_value:
-                continue  # 无需修正
-
-            # 检查修正后的值是否在允许列表中
-            allowed_set = allowed_sets.get(field, set())
-            if normalized_value in allowed_set:
-                # 应用修正
+            allowed_map = allowed_maps.get(field, {})
+            canonical_value = allowed_map.get(compact_text(normalized_value))
+            if canonical_value and canonical_value != str_value:
                 old_value = row[field]
-                row[field] = normalized_value
+                row[field] = canonical_value
+                if not fix_reasons:
+                    fix_reasons = ["多余空格已移除"]
                 fixes.append({
                     "stage": "stage3a",
                     "row": index,
                     "field": field,
                     "action": "format_normalized",
                     "old_value": old_value,
-                    "new_value": normalized_value,
+                    "new_value": canonical_value,
                     "fixes": fix_reasons,
                 })
 
@@ -1213,19 +1319,19 @@ def apply_scenario_condition_corrections(data: Any) -> list[dict[str, Any]]:
     fixes: list[dict[str, Any]] = []
 
     for index, row in enumerate(scenarios, start=1):
-        reasoning = row.get("scenario_reasoning")
+        reasoning = get_by_compact_key(row, "scenario_reasoning")
         if not reasoning or not isinstance(reasoning, dict):
             continue
-        conditions = reasoning.get("场景条件相关性检查")
+        conditions = get_by_compact_key(reasoning, "场景条件相关性检查")
         if not conditions or not isinstance(conditions, dict):
             continue
 
         for condition_field, scenario_field in STAGE3A_CONDITION_TO_SCENARIO_FIELD.items():
-            reasoning_text = conditions.get(condition_field, "")
+            reasoning_text = get_by_compact_key(conditions, condition_field, "")
             # 检查推理中是否标记为"不涉及"
             if condition_is_not_applicable(reasoning_text):
                 current_value = str(get_by_alias(row, scenario_field) or "").strip()
-                if current_value and current_value != "不涉及":
+                if current_value and not text_equal_ignoring_space(current_value, "不涉及"):
                     # 修改原字段值
                     row[scenario_field] = "不涉及"
                     fixes.append({
@@ -1254,16 +1360,15 @@ def is_blankish(value: Any) -> bool:
 def stage3b_effective_mf_id(data: dict[str, Any], mf_id: str | None) -> str | None:
     if mf_id:
         return mf_id
-    meta = data.get("meta")
+    meta = get_by_compact_key(data, "meta")
     if not isinstance(meta, dict):
         return None
-    meta_mf_id = str(meta.get("mf_id") or meta.get("MF_ID") or "").strip()
+    meta_mf_id = str(get_by_compact_key(meta, "mf_id") or get_by_compact_key(meta, "MF_ID") or "").strip()
     return meta_mf_id or None
 
 
 def check_stage3b_top_level(data: dict[str, Any], errors: list[dict[str, Any]]) -> None:
-    extra = sorted(key for key in data.keys() if key not in STAGE3B_TOP_LEVEL_KEYS)
-    missing = sorted(key for key in STAGE3B_TOP_LEVEL_KEYS if key not in data)
+    extra, missing = top_level_key_diff(data, STAGE3B_TOP_LEVEL_KEYS)
     if extra:
         errors.append({"stage": "stage3b", "error": "unexpected_top_level_keys", "keys": extra})
     if missing:
@@ -1314,7 +1419,7 @@ def check_stage3b_against_stage3a(
             "actual": actual_list_nos,
         })
     stage3a_mf_id = stage3a_effective_mf_id(stage3a, None)
-    if mf_id and stage3a_mf_id and mf_id != stage3a_mf_id:
+    if mf_id and stage3a_mf_id and not text_equal_ignoring_space(mf_id, stage3a_mf_id):
         errors.append({
             "stage": "stage3b",
             "error": "mf_id_mismatch_with_stage3a",
@@ -1338,28 +1443,28 @@ def check_stage3b_sec(
     check_stage3b_top_level(data, errors)
     effective_mf_id = stage3b_effective_mf_id(data, mf_id)
 
-    if "meta" not in data:
+    if not has_compact_key(data, "meta"):
         errors.append({"stage": "stage3b", "error": "meta_missing"})
     else:
-        meta = data.get("meta")
+        meta = get_by_compact_key(data, "meta")
         if not isinstance(meta, dict):
             errors.append({"stage": "stage3b", "error": "meta_must_be_object"})
         else:
             for field in ["run_id", "mf_id", "stage"]:
-                if field not in meta or is_blankish(meta.get(field)):
+                if not has_compact_key(meta, field) or is_blankish(get_by_compact_key(meta, field)):
                     errors.append({
                         "stage": "stage3b",
                         "error": "meta_missing_field",
                         "field": field,
                     })
-            if str(meta.get("stage") or "").strip() != "stage3b":
+            if not text_equal_ignoring_space(get_by_compact_key(meta, "stage"), "stage3b"):
                 errors.append({
                     "stage": "stage3b",
                     "error": "meta_stage_must_be_stage3b",
-                    "actual": meta.get("stage"),
+                    "actual": get_by_compact_key(meta, "stage"),
                 })
-            meta_mf_id = str(meta.get("mf_id") or meta.get("MF_ID") or "").strip()
-            if mf_id and meta_mf_id and mf_id != meta_mf_id:
+            meta_mf_id = str(get_by_compact_key(meta, "mf_id") or get_by_compact_key(meta, "MF_ID") or "").strip()
+            if mf_id and meta_mf_id and not text_equal_ignoring_space(mf_id, meta_mf_id):
                 errors.append({
                     "stage": "stage3b",
                     "error": "mf_id_mismatch",
@@ -1367,11 +1472,11 @@ def check_stage3b_sec(
                     "actual": meta_mf_id,
                 })
 
-    if "sec_records" not in data:
+    if not has_compact_key(data, "sec_records"):
         errors.append({"stage": "stage3b", "error": "sec_records_missing"})
         return
 
-    sec_records = data.get("sec_records")
+    sec_records = get_by_compact_key(data, "sec_records")
     if not isinstance(sec_records, list):
         errors.append({"stage": "stage3b", "error": "sec_records_must_be_array"})
         return
@@ -1431,7 +1536,7 @@ def check_stage3b_sec(
                     "actual": get_by_alias(record, "List_No"),
                 })
 
-        missing = [field for field in STAGE3B_REQUIRED_FIELDS if field not in record]
+        missing = [field for field in STAGE3B_REQUIRED_FIELDS if not has_compact_key(record, field)]
         if missing:
             errors.append({
                 "stage": "stage3b",
@@ -1443,7 +1548,9 @@ def check_stage3b_sec(
         blank_fields = [
             field
             for field in STAGE3B_REQUIRED_FIELDS
-            if field in record and field != "sec_reasoning" and is_blankish(record.get(field))
+            if has_compact_key(record, field)
+            and field != "sec_reasoning"
+            and is_blankish(get_by_compact_key(record, field))
         ]
         if blank_fields:
             errors.append({
@@ -1453,7 +1560,7 @@ def check_stage3b_sec(
                 "fields": blank_fields,
             })
 
-        sec_reasoning = record.get("sec_reasoning")
+        sec_reasoning = get_by_compact_key(record, "sec_reasoning")
         if not sec_reasoning or not isinstance(sec_reasoning, dict):
             errors.append({
                 "stage": "stage3b",
@@ -1463,7 +1570,7 @@ def check_stage3b_sec(
             continue
 
         for rating_type, required_reasoning_fields in STAGE3B_REASONING_REQUIRED_FIELDS.items():
-            rating_reasoning = sec_reasoning.get(rating_type)
+            rating_reasoning = get_by_compact_key(sec_reasoning, rating_type)
             if not isinstance(rating_reasoning, dict):
                 errors.append({
                     "stage": "stage3b",
@@ -1475,7 +1582,7 @@ def check_stage3b_sec(
             missing_reasoning = [
                 field
                 for field in required_reasoning_fields
-                if field not in rating_reasoning or is_blankish(rating_reasoning.get(field))
+                if not has_compact_key(rating_reasoning, field) or is_blankish(get_by_compact_key(rating_reasoning, field))
             ]
             if missing_reasoning:
                 errors.append({
@@ -1488,7 +1595,7 @@ def check_stage3b_sec(
 
         normalized_levels: dict[str, str] = {}
         for record_field, rating_type, reasoning_field, prefix in STAGE3B_LEVEL_FIELDS:
-            record_level = normalize_sec(record.get(record_field), prefix)
+            record_level = normalize_sec(get_by_compact_key(record, record_field), prefix)
             normalized_levels[prefix] = record_level or ""
             if record_level is None:
                 errors.append({
@@ -1496,12 +1603,12 @@ def check_stage3b_sec(
                     "row": index,
                     "error": "invalid_sec_level",
                     "field": record_field,
-                    "actual": record.get(record_field),
+                    "actual": get_by_compact_key(record, record_field),
                 })
-            rating_reasoning = sec_reasoning.get(rating_type)
+            rating_reasoning = get_by_compact_key(sec_reasoning, rating_type)
             if not isinstance(rating_reasoning, dict):
                 continue
-            reasoning_level = normalize_sec(rating_reasoning.get(reasoning_field), prefix)
+            reasoning_level = normalize_sec(get_by_compact_key(rating_reasoning, reasoning_field), prefix)
             if reasoning_level is None:
                 errors.append({
                     "stage": "stage3b",
@@ -1509,7 +1616,7 @@ def check_stage3b_sec(
                     "error": "invalid_reasoning_sec_level",
                     "rating_type": rating_type,
                     "field": reasoning_field,
-                    "actual": rating_reasoning.get(reasoning_field),
+                    "actual": get_by_compact_key(rating_reasoning, reasoning_field),
                 })
             elif record_level is not None and reasoning_level != record_level:
                 errors.append({
@@ -1522,48 +1629,26 @@ def check_stage3b_sec(
                     "actual": reasoning_level,
                 })
 
-        expected_asil = asil_from_sec(
-            record.get("Severity 'S'"),
-            record.get("暴露频率'E'"),
-            record.get("控制能力 'C'"),
-        )
-        actual_asil = normalize_asil(record.get("结果ASIL"))
-        if expected_asil is None:
-            errors.append({
-                "stage": "stage3b",
-                "row": index,
-                "error": "asil_cannot_be_calculated_from_sec",
-                "S": record.get("Severity 'S'"),
-                "E": record.get("暴露频率'E'"),
-                "C": record.get("控制能力 'C'"),
-            })
-        elif actual_asil != expected_asil:
-            errors.append({
-                "stage": "stage3b",
-                "row": index,
-                "error": "asil_mismatch_with_sec",
-                "expected": expected_asil,
-                "actual": record.get("结果ASIL"),
-            })
+        expected_asil, actual_asil = check_asil_consistency(record, "stage3b", index, errors)
         if all(normalized_levels.values()):
             expected_formula = sec_formula_fragment(
                 normalized_levels["S"],
                 normalized_levels["E"],
                 normalized_levels["C"],
             )
-            actual_asil_text = re.sub(r"\s+", "", str(record.get("结果ASIL") or ""))
+            actual_asil_text = compact_text(get_by_compact_key(record, ASIL_FIELD))
             if expected_formula not in actual_asil_text:
                 errors.append({
                     "stage": "stage3b",
                     "row": index,
                     "error": "asil_formula_mismatch_with_sec",
                     "expected_fragment": expected_formula,
-                    "actual": record.get("结果ASIL"),
+                    "actual": get_by_compact_key(record, ASIL_FIELD),
                 })
 
         asil_for_ftti = actual_asil or expected_asil
-        ftti_value = record.get("FTTI(ms)")
-        ftti_reason = record.get("FTTI理由")
+        ftti_value = get_by_compact_key(record, "FTTI(ms)")
+        ftti_reason = get_by_compact_key(record, "FTTI理由")
         if asil_for_ftti and asil_for_ftti != "QM":
             if is_blankish(ftti_value):
                 errors.append({
@@ -1603,7 +1688,7 @@ def check_stage3b_sec(
     check_stage3b_against_stage3a(sec_records, stage3a, effective_mf_id, errors)
 
     for field in ["safety_goal", "safe_state"]:
-        value = data.get(field)
+        value = get_by_compact_key(data, field)
         if is_blankish(value):
             errors.append({"stage": "stage3b", "error": f"{field}_missing_or_blank"})
         elif not isinstance(value, str):
@@ -1621,17 +1706,17 @@ def check_stage3b_merged_hara(data: Any, min_scenarios: int, max_scenarios: int,
         return
 
     # Check that max_asil_planning from Stage 3A is preserved
-    if "max_asil_planning" not in data:
+    if not has_compact_key(data, "max_asil_planning"):
         errors.append({"stage": "stage3b", "error": "max_asil_planning_missing_from_stage3a"})
 
     # Use existing check_stage3 for HARA columns
     check_stage3(data, min_scenarios, max_scenarios, mf_id, errors)
 
     # Check sec_reasoning exists
-    if "sec_reasoning" not in data:
+    if not has_compact_key(data, "sec_reasoning"):
         errors.append({"stage": "stage3b", "error": "sec_reasoning_missing"})
     else:
-        sec_reasoning = data.get("sec_reasoning")
+        sec_reasoning = get_by_compact_key(data, "sec_reasoning")
         if not isinstance(sec_reasoning, list):
             errors.append({"stage": "stage3b", "error": "sec_reasoning_must_be_array"})
         else:
@@ -1640,7 +1725,7 @@ def check_stage3b_merged_hara(data: Any, min_scenarios: int, max_scenarios: int,
                 if not isinstance(entry, dict):
                     continue
                 for rating_type in ["S评级推理", "E评级推理", "C评级推理"]:
-                    if rating_type not in entry:
+                    if not has_compact_key(entry, rating_type):
                         errors.append({
                             "stage": "stage3b",
                             "row": index,
@@ -1649,10 +1734,10 @@ def check_stage3b_merged_hara(data: Any, min_scenarios: int, max_scenarios: int,
                         })
 
     # Check that scenario_reasoning from Stage 3A is preserved
-    if "scenario_reasoning" not in data:
+    if not has_compact_key(data, "scenario_reasoning"):
         errors.append({"stage": "stage3b", "error": "scenario_reasoning_missing_from_stage3a"})
     else:
-        scenario_reasoning = data.get("scenario_reasoning")
+        scenario_reasoning = get_by_compact_key(data, "scenario_reasoning")
         if not isinstance(scenario_reasoning, list):
             errors.append({"stage": "stage3b", "error": "scenario_reasoning_must_be_array"})
         else:
@@ -1661,7 +1746,7 @@ def check_stage3b_merged_hara(data: Any, min_scenarios: int, max_scenarios: int,
                 if not isinstance(entry, dict):
                     continue
                 for field in ["场景规划理由", "危害事件推理", "场景条件相关性检查"]:
-                    if field not in entry:
+                    if not has_compact_key(entry, field):
                         errors.append({
                             "stage": "stage3b",
                             "row": index,
@@ -1672,8 +1757,8 @@ def check_stage3b_merged_hara(data: Any, min_scenarios: int, max_scenarios: int,
     # Check that all SEC fields are present (not nan)
     hara = rows(data, "hara")
     for index, row in enumerate(hara, start=1):
-        for field in ["Severity 'S'", "暴露频率'E'", "控制能力 'C'", "结果ASIL"]:
-            value = row.get(field)
+        for field in [SEC_S_FIELD, SEC_E_FIELD, SEC_C_FIELD, ASIL_FIELD]:
+            value = get_by_compact_key(row, field)
             if value is None or (isinstance(value, str) and value.strip() == ""):
                 errors.append({
                     "stage": "stage3b",
@@ -1683,46 +1768,104 @@ def check_stage3b_merged_hara(data: Any, min_scenarios: int, max_scenarios: int,
                 })
 
 
+def normalize_known_rows(
+    source_rows: list[dict[str, Any]],
+    columns: list[str],
+    keep_alias_keys: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    known_keys = {
+        compact_field_name(candidate)
+        for column in columns
+        for candidate in [column, *ALIASES.get(column, [])]
+    }
+    keep_alias_compacts = {compact_field_name(key) for key in keep_alias_keys or set()}
+    normalized_rows = normalize_rows(source_rows, columns)
+    for source_row, normalized_row in zip(source_rows, normalized_rows):
+        for key, value in source_row.items():
+            compact_key = compact_field_name(key)
+            if key not in normalized_row and (compact_key not in known_keys or compact_key in keep_alias_compacts):
+                normalized_row[key] = value
+    return normalized_rows
+
+
 def normalize_stage_data(data: Any, stage: str) -> Any:
     if not isinstance(data, dict):
         return data
     normalized = dict(data)
-    if stage in {"stage1", "stage1_slice"}:
-        normalized["derive_mf"] = normalize_rows(rows(data, "derive_mf"), DERIVE_MF_COLUMNS)
-    elif stage in {"stage2", "stage2_slice"}:
-        source_rows = rows(data, "mf_vehicle_hazards")
-        normalized_rows = normalize_rows(source_rows, MF_VEHICLE_HAZARDS_COLUMNS)
-        for source_row, normalized_row in zip(source_rows, normalized_rows):
-            for key, value in source_row.items():
-                if key not in normalized_row:
-                    normalized_row[key] = value
-        normalized["mf_vehicle_hazards"] = normalized_rows
-    elif stage == "stage3":
-        normalized["hara"] = normalize_rows(rows(data, "hara"), HARA_COLUMNS)
-    elif stage == "stage3a":
-        normalized["scenarios"] = normalize_rows(rows(data, "scenarios"), SCENARIOS_COLUMNS)
+    if stage in {"stage1", "stage1_slice"} and has_compact_key(data, "derive_mf"):
+        normalized["derive_mf"] = normalize_known_rows(
+            rows(data, "derive_mf"),
+            DERIVE_MF_COLUMNS,
+            keep_alias_keys=set(STAGE1_MERGED_FAULT_FIELDS),
+        )
+    elif stage in {"stage2", "stage2_slice"} and has_compact_key(data, "mf_vehicle_hazards"):
+        normalized["mf_vehicle_hazards"] = normalize_known_rows(rows(data, "mf_vehicle_hazards"), MF_VEHICLE_HAZARDS_COLUMNS)
+    elif stage == "stage3" and has_compact_key(data, "hara"):
+        normalized["hara"] = normalize_known_rows(rows(data, "hara"), HARA_COLUMNS)
+    elif stage == "stage3a" and has_compact_key(data, "scenarios"):
+        normalized["scenarios"] = normalize_known_rows(rows(data, "scenarios"), SCENARIOS_COLUMNS)
     elif stage == "stage3b":
-        normalized["hara"] = normalize_rows(rows(data, "hara"), HARA_COLUMNS)
-    elif stage == "stage4":
-        normalized["sg_sum"] = normalize_rows(rows(data, "sg_sum"), SG_SUM_COLUMNS)
+        if has_compact_key(data, "hara"):
+            normalized["hara"] = normalize_known_rows(rows(data, "hara"), HARA_COLUMNS)
+        if has_compact_key(data, "sec_records"):
+            normalized["sec_records"] = normalize_known_rows(rows(data, "sec_records"), SEC_RECORDS_COLUMNS)
+    elif stage == "stage4" and has_compact_key(data, "sg_sum"):
+        normalized["sg_sum"] = normalize_known_rows(rows(data, "sg_sum"), SG_SUM_COLUMNS)
     return normalized
 
 
-def highest_asil_by_mf(hara_rows: list[dict[str, Any]]) -> dict[str, str]:
-    result: dict[str, str] = {}
+def safety_goal_key(value: Any) -> str:
+    if is_nan_like(value):
+        return ""
+    return compact_text(value)
+
+
+def ftti_ms_number(value: Any) -> float | None:
+    if is_nan_like(value):
+        return None
+    match = re.search(r"\d+(?:\.\d+)?", str(value))
+    return float(match.group(0)) if match else None
+
+
+def sg_summary_group_key(mf_id: Any, safety_goal: Any) -> str:
+    mf_text = compact_text(mf_id)
+    goal_key = safety_goal_key(safety_goal)
+    return f"{mf_text}\0{goal_key}" if mf_text and goal_key else ""
+
+
+def expected_stage4_sg_groups(hara_rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
     for row in hara_rows:
-        mf_id = str(row.get("MF_ID", "")).strip()
         asil = normalize_asil(row.get("结果ASIL"))
-        if not mf_id or asil is None:
+        if asil is None or asil == "QM":
             continue
-        current = result.get(mf_id)
-        if current is None or ASIL_ORDER[asil] > ASIL_ORDER[current]:
-            result[mf_id] = asil
-    return result
+        mf_id = str(row.get("MF_ID") or "").strip()
+        if not mf_id:
+            continue
+        goal = str(row.get("安全目标") or "").strip()
+        key = safety_goal_key(goal)
+        if not key:
+            continue
+        group_key = sg_summary_group_key(mf_id, goal)
+        group = groups.setdefault(group_key, {
+            "MF_ID": mf_id,
+            "安全目标": goal,
+            "ASIL Level": asil,
+            "FTTI(ms)": row.get("FTTI(ms)"),
+            "ftti_number": ftti_ms_number(row.get("FTTI(ms)")),
+        })
+        if ASIL_ORDER[asil] > ASIL_ORDER[group["ASIL Level"]]:
+            group["ASIL Level"] = asil
+        row_ftti = ftti_ms_number(row.get("FTTI(ms)"))
+        if row_ftti is not None and (group["ftti_number"] is None or row_ftti < group["ftti_number"]):
+            group["FTTI(ms)"] = row.get("FTTI(ms)")
+            group["ftti_number"] = row_ftti
+    return groups
 
 
 def check_stage4(data: Any, hara_data: Any | None, errors: list[dict[str, Any]], warnings: list[dict[str, Any]]) -> None:
     sg_sum = rows(data, "sg_sum")
+    seen_group_keys: set[str] = set()
     for index, row in enumerate(sg_sum, start=1):
         missing = missing_fields(row, SG_SUM_COLUMNS)
         if missing:
@@ -1731,7 +1874,29 @@ def check_stage4(data: Any, hara_data: Any | None, errors: list[dict[str, Any]],
                 "row": index,
                 "warning": "missing_required_fields_auto_fixable",
                 "fields": missing,
-                "message": "最终 validate_hara_json.py 会基于 HARA 最高 ASIL 场景重建或修正 SG_Sum。",
+                "message": "最终 validate_hara_json.py 会基于 HARA 的 MF_ID + 安全目标分组重建或修正 SG_Sum。",
+            })
+        group_key = sg_summary_group_key(row.get("MF_ID"), row.get("安全目标"))
+        if group_key:
+            if group_key in seen_group_keys:
+                errors.append({
+                    "stage": "stage4",
+                    "row": index,
+                    "error": "duplicate_mf_safety_goal_summary",
+                    "MF_ID": row.get("MF_ID"),
+                    "安全目标": row.get("安全目标"),
+                    "message": "SG_Sum 应按同一 MF_ID 内相同安全目标汇总；同一 MF_ID + 安全目标只能保留一条。",
+                })
+            seen_group_keys.add(group_key)
+        operation_mode = str(row.get("操作模式") or "").strip()
+        if is_nan_like(operation_mode) or text_in_ignoring_space(operation_mode, OPERATION_MODE_PLACEHOLDERS):
+            errors.append({
+                "stage": "stage4",
+                "row": index,
+                "error": "operation_mode_missing_or_placeholder",
+                "MF_ID": row.get("MF_ID"),
+                "安全目标": row.get("安全目标"),
+                "message": "Stage4 只允许大模型填写操作模式；运行 check 前必须把占位值替换为具体操作模式。",
             })
     for index, row in enumerate(sg_sum, start=1):
         asil = normalize_asil(row.get("ASIL Level"))
@@ -1746,51 +1911,79 @@ def check_stage4(data: Any, hara_data: Any | None, errors: list[dict[str, Any]],
             warnings.append({
                 "stage": "stage4",
                 "row": index,
-                "warning": "qm_mf_will_be_removed_from_sg_sum",
+                "warning": "qm_safety_goal_will_be_removed_from_sg_sum",
                 "MF_ID": row.get("MF_ID"),
+                "安全目标": row.get("安全目标"),
             })
 
     if hara_data is None:
         return
-    mf_highest = highest_asil_by_mf(rows_any(hara_data, "hara", "HARA"))
-    expected_non_qm = {mf_id for mf_id, asil in mf_highest.items() if asil != "QM"}
-    qm_only = {mf_id for mf_id, asil in mf_highest.items() if asil == "QM"}
-    actual = {str(row.get("MF_ID", "")).strip() for row in sg_sum if str(row.get("MF_ID", "")).strip()}
+    expected_groups = expected_stage4_sg_groups(rows_any(hara_data, "hara", "HARA"))
+    actual_group_keys = {
+        sg_summary_group_key(row.get("MF_ID"), row.get("安全目标"))
+        for row in sg_sum
+        if sg_summary_group_key(row.get("MF_ID"), row.get("安全目标"))
+    }
     for index, row in enumerate(sg_sum, start=1):
-        mf_id = str(row.get("MF_ID", "")).strip()
-        if not mf_id or mf_id not in mf_highest:
+        group_key = sg_summary_group_key(row.get("MF_ID"), row.get("安全目标"))
+        if not group_key:
+            warnings.append({
+                "stage": "stage4",
+                "row": index,
+                "warning": "sg_mf_id_or_safety_goal_missing_auto_fixable",
+                "message": "SG_Sum 行缺少 MF_ID 或安全目标，最终会按 HARA 的 MF_ID + 安全目标重建。",
+            })
+            continue
+        expected = expected_groups.get(group_key)
+        if expected is None:
             continue
         actual_asil = normalize_asil(row.get("ASIL Level"))
-        expected_asil = mf_highest[mf_id]
+        expected_asil = expected["ASIL Level"]
         if actual_asil != expected_asil:
             errors.append({
                 "stage": "stage4",
                 "row": index,
-                "error": "sg_asil_mismatch_with_hara_highest",
-                "MF_ID": mf_id,
+                "error": "sg_asil_mismatch_with_mf_safety_goal_highest",
+                "MF_ID": row.get("MF_ID"),
+                "安全目标": row.get("安全目标"),
                 "actual": row.get("ASIL Level"),
-                "expected_from_hara": expected_asil,
+                "expected_highest_from_hara": expected_asil,
             })
-    missing = sorted(expected_non_qm - actual)
-    extra_qm = sorted(qm_only & actual)
-    unknown = sorted(actual - set(mf_highest))
+        expected_ftti = expected.get("ftti_number")
+        if expected_ftti is not None:
+            actual_ftti = ftti_ms_number(row.get("FTTI(ms)"))
+            if actual_ftti is None or abs(actual_ftti - expected_ftti) > 1e-9:
+                errors.append({
+                    "stage": "stage4",
+                    "row": index,
+                    "error": "sg_ftti_not_min_for_mf_safety_goal",
+                    "MF_ID": row.get("MF_ID"),
+                    "安全目标": row.get("安全目标"),
+                    "actual": row.get("FTTI(ms)"),
+                    "expected_min_from_hara": expected.get("FTTI(ms)"),
+                })
+        if not text_equal_ignoring_space(row.get("MF_ID"), expected["MF_ID"]):
+            warnings.append({
+                "stage": "stage4",
+                "row": index,
+                "warning": "sg_mf_id_mismatch_auto_fixable",
+                "安全目标": row.get("安全目标"),
+                "actual": row.get("MF_ID"),
+                "expected": expected["MF_ID"],
+            })
+    missing = sorted(set(expected_groups) - actual_group_keys)
+    unknown = sorted(actual_group_keys - set(expected_groups))
     if missing:
         warnings.append({
             "stage": "stage4",
-            "warning": "non_qm_mf_missing_sg_sum_entry_auto_fixable",
-            "MF_ID": missing,
-        })
-    if extra_qm:
-        warnings.append({
-            "stage": "stage4",
-            "warning": "qm_mf_will_be_removed_from_sg_sum",
-            "MF_ID": extra_qm,
+            "warning": "non_qm_mf_safety_goal_missing_sg_sum_entry_auto_fixable",
+            "mf_safety_goal_keys": missing,
         })
     if unknown:
         warnings.append({
             "stage": "stage4",
-            "warning": "sg_sum_references_unknown_mf_will_be_removed",
-            "MF_ID": unknown,
+            "warning": "sg_sum_references_unknown_mf_safety_goal_will_be_removed",
+            "mf_safety_goal_keys": unknown,
         })
 
 
@@ -1812,34 +2005,34 @@ def main() -> int:
     args = parser.parse_args()
 
     json_path = Path(args.json)
-    data = load_json(json_path)
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     effective_stage = "stage3b" if args.stage == "stage3b_raw" else args.stage
+    data = normalize_stage_data(normalize_whitespace(load_json(json_path)), effective_stage)
 
     if args.stage == "stage0":
         check_stage0(data, errors)
     elif args.stage == "stage1":
-        stage0 = load_json(Path(args.stage0)) if args.stage0 else None
+        stage0 = normalize_whitespace(load_json(Path(args.stage0))) if args.stage0 else None
         check_stage1(data, stage0, errors, warnings, auto_fix=args.fix)
     elif args.stage == "stage1_slice":
-        stage0 = load_json(Path(args.stage0)) if args.stage0 else None
+        stage0 = normalize_whitespace(load_json(Path(args.stage0))) if args.stage0 else None
         check_stage1_slice(data, stage0, args.function_id, errors, warnings, auto_fix=args.fix)
     elif args.stage == "stage2":
-        stage1 = normalize_stage_data(load_json(Path(args.stage1)), "stage1") if args.stage1 else None
+        stage1 = normalize_stage_data(normalize_whitespace(load_json(Path(args.stage1))), "stage1") if args.stage1 else None
         check_stage2(data, stage1, errors, warnings)
     elif args.stage == "stage2_slice":
-        stage1 = normalize_stage_data(load_json(Path(args.stage1)), "stage1_slice") if args.stage1 else None
+        stage1 = normalize_stage_data(normalize_whitespace(load_json(Path(args.stage1))), "stage1_slice") if args.stage1 else None
         check_stage2_slice(data, stage1, args.function_id, errors, warnings)
     elif args.stage == "stage3":
         check_stage3(data, args.min_scenarios, args.max_scenarios, args.mf_id, errors)
-        stage2 = normalize_stage_data(load_json(Path(args.stage2)), "stage2") if args.stage2 else None
+        stage2 = normalize_stage_data(normalize_whitespace(load_json(Path(args.stage2))), "stage2") if args.stage2 else None
         check_stage3_against_stage2(data, stage2, errors)
-        operation_scenarios = load_json(Path(args.operation_scenarios)) if args.operation_scenarios else None
+        operation_scenarios = normalize_whitespace(load_json(Path(args.operation_scenarios))) if args.operation_scenarios else None
         check_stage3_operation_scenarios(data, operation_scenarios, errors)
     elif args.stage == "stage3a":
-        stage2 = normalize_stage_data(load_json(Path(args.stage2)), "stage2") if args.stage2 else None
-        operation_scenarios = load_json(Path(args.operation_scenarios)) if args.operation_scenarios else None
+        stage2 = normalize_stage_data(normalize_whitespace(load_json(Path(args.stage2))), "stage2") if args.stage2 else None
+        operation_scenarios = normalize_whitespace(load_json(Path(args.operation_scenarios))) if args.operation_scenarios else None
         # 自动修正格式问题（空格、括号等）
         if args.fix:
             format_fixes = apply_scenario_enum_format_fixes(data, operation_scenarios)
@@ -1868,15 +2061,16 @@ def main() -> int:
                 "warning": "deprecated_stage_name",
                 "message": "stage3b_raw 已改名为 stage3b；请更新命令为 --stage stage3b。",
             })
-        stage3a = normalize_stage_data(load_json(Path(args.stage3a)), "stage3a") if args.stage3a else None
+        stage3a = normalize_stage_data(normalize_whitespace(load_json(Path(args.stage3a))), "stage3a") if args.stage3a else None
         check_stage3b_sec(data, args.min_scenarios, args.max_scenarios, args.mf_id, errors, stage3a)
     elif args.stage == "stage4":
-        hara_data = normalize_stage_data(load_json(Path(args.hara)), "stage3") if args.hara else None
+        hara_data = normalize_stage_data(normalize_whitespace(load_json(Path(args.hara))), "stage3") if args.hara else None
         check_stage4(data, hara_data, errors, warnings)
 
     fixed = False
-    if args.fix and not errors and args.stage in {"stage1", "stage1_slice", "stage2", "stage2_slice", "stage3", "stage3a", "stage4"}:
-        dump_json(normalize_stage_data(data, args.stage), json_path)
+    fixable_stages = {"stage1", "stage1_slice", "stage2", "stage2_slice", "stage3", "stage3a", "stage3b", "stage4"}
+    if args.fix and not errors and effective_stage in fixable_stages:
+        dump_json(normalize_stage_data(data, effective_stage), json_path)
         fixed = True
 
     summary = {

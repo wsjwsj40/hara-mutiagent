@@ -1,50 +1,48 @@
 ---
 name: hara-stage4
-description: Stage 4 SG_Sum 汇总。用于在 Stage 3 HARA 文件完成 ASIL 同步后，使用 generate_stage4_sg.py 生成 output/<RUN_ID>_stage4_sg_sum.json。过滤最高 ASIL 为 QM 的 MF，并继承每个 MF 的最高 ASIL。不要用于从零手写安全目标。
+description: Stage 4 SG_Sum 汇总。用于在 Stage 3 HARA 通过校验后生成 output/<RUN_ID>_stage4_sg_sum.json；除“操作模式”由模型填写外，MF_ID、安全目标、ASIL Level、安全状态、FTTI 和 Comments 都必须由 generate_stage4_sg.py 从 HARA 派生；同一 MF 内相同安全目标汇总时 ASIL 取最高、FTTI 取最小。
 ---
 
 # Stage 4：SG_Sum 汇总
 
+## 文档分工
+
+- 本文件：定义 Stage4 职责、上下文边界和门禁。
+- `references/json-contracts.md`：Stage4 输出结构。
+- `references/stage4-sg-summary.md`：工具派生规则和操作模式填写规则。
+
 ## 职责边界
 
-使用确定性工具生成 SG_Sum。不要凭记忆手工重建 SG 行。
+Stage4 不是重新生成安全目标。先用 `generate_stage4_sg.py` 从已校验 HARA 派生 SG_Sum 草稿；工具在同一 `MF_ID` 内按相同 `安全目标` 汇总，`ASIL Level` 取该 MF/安全目标组合内的最高值，`FTTI(ms)` 取最小值。不同 MF 即使安全目标文字相同，也分别保留。大模型只填写 `操作模式` 字段，不改 `MF_ID`、`安全目标`、`ASIL Level`、`安全状态`、`FTTI(ms)`、`Comments`、`SG_No`。
 
 ## 输入输出
 
-- 输入：所有完成 ASIL 同步的 `output/<RUN_ID>_stage3_<MF_ID>_hara.json` 文件。
+- 输入：所有通过 `check_stage_json.py --stage stage3` 的 `output/<RUN_ID>_stage3_<MF_ID>_hara.json`。
 - 输出：`output/<RUN_ID>_stage4_sg_sum.json`。
-- 必读契约：`references/json-contracts.md`。
-- 仅在需要澄清工具行为或 SG 字段时，读取 `references/stage4-sg-summary.md`。
-
-## 上下文加载
-
-1. 不要把每个 Stage 3 文件全部读入对话上下文。
-2. 使用 `generate_stage4_sg.py` 扫描 Stage 3 文件。
-3. 读取 `references/json-contracts.md`，确认 Stage 4 输出 Schema。
-4. 只在摘要或排障时读取生成后的 Stage 4 JSON。
-5. 只有在安全目标表述存疑时，才加载 `knowledge-base/automotive/hara/common/05-safety_goal.md`。
-
-## 规则
-
-- 排除最高 ASIL 为 `QM` 的 MF。
-- SG_Sum 的 ASIL 继承该 MF 的最高 ASIL HARA 场景。
-- 保留与最高风险路径对应的安全目标和安全状态。
-- `SG_No` 连续编号。
 
 ## 执行流程
 
-1. 确认所有 Stage 3 文件已经运行 `apply_asil_matrix.py`。
-2. 运行生成工具。
-3. 对照 `references/json-contracts.md` 顶部的“完整输出 Schema（严格遵循）”检查顶层 key、字段名、数组/对象结构，不要改名或增包一层。
-4. 验证 Stage 4；可自动修复的 warning 交给 Stage 4R 或最终验证处理。
+1. 运行 `generate_stage4_sg.py` 生成 Stage4 草稿。
+2. 只读取 Stage4 草稿里的 `sg_sum` 行和 `Comments` 证据，为每行填写具体 `操作模式`。
+3. 不改工具派生字段；如果发现工具派生字段有问题，回到 Stage3 或工具校验修正。
+4. 运行 `check_stage_json.py --stage stage4`；若报 `operation_mode_missing_or_placeholder`，只补 `操作模式` 后重跑。
+
+## 操作模式要求
+
+- 写成简洁名词短语，例如：`驻车保持模式`、`坡道起步/低速行驶模式`、`行驶制动控制模式`。
+- 依据 `Comments` 中的来源场景证据归纳，不机械复制整段道路/车辆状态。
+- 不填写 `nan`、`待填写`、`待补充` 或泛化的 `正常运行模式`。
 
 ## 命令
 
 ```text
 python tools/hara/generate_stage4_sg.py --stage-dir output --prefix <RUN_ID> --out output/<RUN_ID>_stage4_sg_sum.json
-python tools/hara/check_stage_json.py --stage stage4 --json output/<RUN_ID>_stage4_sg_sum.json --hara output/<RUN_ID>_stage3_<MF_ID>_hara.json --fix
+
+python tools/hara/hara_stage_merge.py --stage-dir output --prefix <RUN_ID> --out output/<RUN_ID>_before_stage4_check.json
+
+python tools/hara/check_stage_json.py --stage stage4 --json output/<RUN_ID>_stage4_sg_sum.json --hara output/<RUN_ID>_before_stage4_check.json --fix
 ```
 
 ## 返回
 
-返回 `status`、`total_sg`、`qm_filtered`、ASIL 分布、输出文件，并说明下一步是否进入 Stage 4R。
+返回 `status`、`total_sg`、待补/已补操作模式数量、输出文件，并说明是否进入 Stage4R。

@@ -59,12 +59,12 @@ def asil_from_sec(severity: Any, exposure: Any, controllability: Any) -> str | N
 def normalize_asil(value: Any) -> str | None:
     if value is None:
         return None
-    text = str(value).strip().upper()
+    text = re.sub(r"[\s\u3000]+", "", str(value).upper())
     if text in {"", "NAN", "NONE", "NULL"}:
         return None
     if text in ASIL_ORDER:
         return text
-    match = re.search(r"ASIL\s*([ABCD])", text)
+    match = re.search(r"ASIL\W*([ABCD])", text)
     if match:
         return match.group(1)
     if "QM" in text:

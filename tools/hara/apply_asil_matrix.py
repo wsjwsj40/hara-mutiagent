@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Apply the project ASIL rule to HARA stage JSON without changing its shape.
+"""Legacy helper to apply the project ASIL rule to HARA JSON.
 
-Use this after Stage 3 and before Stage 4 so SG_Sum is based on tool-corrected
-ASIL values, not the LLM's hand-calculated ASIL.
+The standard multi-agent flow now relies on check_stage_json.py to catch ASIL
+mismatches before Stage 4. Keep this script only for manual recovery or old
+artifacts that need deterministic ASIL normalization.
 """
 from __future__ import annotations
 
