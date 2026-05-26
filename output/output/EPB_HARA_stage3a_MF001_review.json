@@ -1,0 +1,310 @@
+{
+  "meta": {
+    "run_id": "EPB_HARA",
+    "stage": "stage3a_review",
+    "mf_id": "MF001",
+    "target_file": "output/EPB_HARA_stage3a_MF001_scenarios.json",
+    "generated_at": "2026-05-26T00:00:00+08:00",
+    "reviewer": "hara-stage3ar"
+  },
+  "overall_result": "pass",
+  "total_scenarios": 16,
+  "passed_scenarios": 16,
+  "failed_scenarios": 0,
+  "issues": [],
+  "fixes": [],
+  "per_scenario_reviews": [
+    {
+      "List_No": 1,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "可信最高风险原型：下坡8%+驾驶员不在车内+行人，运动方向正确（下坡+朝前=向前），力源为坡道重力，场景真实可信"
+    },
+    {
+      "List_No": 2,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "高能量碰撞原型：陡坡12%+近距离前车（3米）+驾驶员不在车内，碰撞能量大且无干预可能，场景合理"
+    },
+    {
+      "List_No": 3,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "可控性边界原型：夜间+驾驶员不在车内，环境条件正确标注为相关且影响SEC的E和C评级，场景合理"
+    },
+    {
+      "List_No": 4,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "上坡后溜原型：上坡10%+车辆朝前=向后溜动，运动方向自洽，验证重力方向规则，场景合理"
+    },
+    {
+      "List_No": 5,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "高暴露原型：主干路路口+红绿灯+行人过街，常见且风险高，场景合理"
+    },
+    {
+      "List_No": 6,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "恶劣天气原型：雨天正确标注为'不影响危害事件因果链（重力分量是主要力源），但影响SEC的E和C评级'，逻辑正确"
+    },
+    {
+      "List_No": 7,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "驾驶员在环但可控性低原型：停车未熄火+D挡半联动，重力分量+D挡扭矩共同作用，驾驶员在车内但反应不及，场景合理"
+    },
+    {
+      "List_No": 8,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "上坡后溜+驱动扭矩原型：上坡8%+R挡半联动，重力分量+R挡扭矩双向力源，场景合理"
+    },
+    {
+      "List_No": 9,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "外力推动原型：平地+后车碰撞提供外力，EPB失效导致车辆无法保持静止，验证平地场景必须有外力源，场景合理"
+    },
+    {
+      "List_No": 10,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "平地多力源原型：推车外力+D挡蠕行扭矩，验证平地场景必须有实际纵向力源，场景合理"
+    },
+    {
+      "List_No": 11,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "低风险边界原型：坡度较小（4%）+无风险对象+路缘石阻挡，说明风险上限，场景合理"
+    },
+    {
+      "List_No": 12,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "低附着力原型：沙石路面正确标注为'降低附着力但坡道重力仍是主要力源'，逻辑正确，场景合理"
+    },
+    {
+      "List_No": 13,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "特殊场景原型：高速公路紧急车道+被追尾，验证被追尾后的次生溜车风险，场景合理"
+    },
+    {
+      "List_No": 14,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "低能见度原型：雾霾+行人数量多，正确标注为'不影响危害事件因果链，但影响SEC的C评级'，逻辑正确"
+    },
+    {
+      "List_No": 15,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "陡坡高能量原型：15%陡坡+向后快速溜动，能量大且速度快，场景合理"
+    },
+    {
+      "List_No": 16,
+      "result": "pass",
+      "checkpoints": {
+        "max_asil_planning_coverage": "pass",
+        "scenario_authenticity": "pass",
+        "scenario_independence": "pass",
+        "operating_domain": "pass",
+        "field_consistency": "pass",
+        "hazard_event_logic": "pass",
+        "motion_consistency": "pass",
+        "force_source_validity": "pass",
+        "necessity_of_mf": "pass",
+        "no_condition_conflicts": "pass"
+      },
+      "comments": "财产损失边界原型：溜车后撞击货物而非人，说明非所有场景都会造成人员伤害，场景合理"
+    }
+  ],
+  "summary": {
+    "max_asil_planning": "pass",
+    "scenario_coverage": [
+      "坡道+行人（下坡/上坡）",
+      "坡道+前车/后车",
+      "夜间/雾霾",
+      "平地外力推动",
+      "D/R挡扭矩",
+      "沙石/雨天低附着力",
+      "高速公路紧急车道",
+      "低风险/财产损失边界"
+    ],
+    "force_sources_validated": [
+      "坡道重力（9个场景）",
+      "外力推动（2个场景）",
+      "驱动扭矩（2个场景）",
+      "复合力源（3个场景）"
+    ],
+    "allow_stage3b": true
+  }
+}

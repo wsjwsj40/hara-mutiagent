@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "run_id": "EPB_HARA",
+    "stage": "stage0r",
+    "generated_at": "2026-05-17T18:35:00+08:00"
+  },
+  "review_summary": {
+    "status": "passed",
+    "completeness": "PASS",
+    "boundary_accuracy": "PASS",
+    "function_id_continuity": "PASS",
+    "detail_text_quality": "PASS",
+    "system_identification": "PASS"
+  },
+  "findings": [],
+  "warnings": [],
+  "errors": [],
+  "next_step": "Stage 1 功能故障生成"
+}

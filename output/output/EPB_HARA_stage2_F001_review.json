@@ -1,0 +1,66 @@
+{
+  "meta": {
+    "function_id": "F001",
+    "function_name": "静态开关拉起功能",
+    "target_file": "output/EPB_HARA_stage2_F001_mf_vehicle_hazards.json",
+    "reviewed_at": "2026-05-25T00:00:00+08:00"
+  },
+  "overall_result": "pass",
+  "issues": [],
+  "mf_reviews": [
+    {
+      "milf_id": "MF001",
+      "fault_field": "功能丧失",
+      "vehicle_hazard": "非预期的纵向移动",
+      "result": "pass",
+      "notes": "功能本意（防止车辆移动）识别准确，危害选择（应该不动却动了）正确，推理链完整"
+    },
+    {
+      "milf_id": "MF002",
+      "fault_field": "过小",
+      "vehicle_hazard": "非预期的纵向移动",
+      "result": "pass",
+      "notes": "制动力不足导致驻车保持力失效，车辆意外移动，危害映射正确"
+    },
+    {
+      "milf_id": "MF003",
+      "fault_field": "过晚",
+      "vehicle_hazard": "非预期的纵向移动",
+      "result": "pass",
+      "notes": "响应延迟导致车辆在预期驻车前发生移动，危害映射正确"
+    },
+    {
+      "milf_id": "MF004",
+      "fault_field": "非预期激活",
+      "vehicle_hazard": "非预期的减速",
+      "result": "pass",
+      "notes": "行驶中意外制动导致车辆减速，正确选择'非预期的减速'，与驻车失效导致的车辆移动区分清晰"
+    },
+    {
+      "milf_id": "MF005",
+      "fault_field": "卡滞",
+      "vehicle_hazard": "非预期的纵向移动",
+      "result": "pass",
+      "notes": "卡滞导致无法建立驻车状态，与目标状态（拉起）一致，危害映射正确"
+    },
+    {
+      "milf_id": "MF006",
+      "fault_field": "方向错误",
+      "vehicle_hazard": "非预期的纵向移动",
+      "result": "pass",
+      "notes": "方向错误破坏驻车功能导致车辆意外移动，未扩大化为车辆反向行驶，危害映射正确"
+    }
+  ],
+  "checks": {
+    "function_intent_identified": true,
+    "vehicle_effect_real": true,
+    "hazard_from_consequence": true,
+    "reasoning_chain_complete": true,
+    "atomicity_maintained": true,
+    "direction_error_not_exaggerated": true,
+    "stuck_direction_consistent": true,
+    "stage3_usable": true
+  },
+  "fixes": [],
+  "notes": "所有 MF 危害映射准确，推理链完整，驻车失效场景正确识别为'应该不动却动了'，方向错误未扩大化，卡滞与目标状态一致。无修正需求。"
+}

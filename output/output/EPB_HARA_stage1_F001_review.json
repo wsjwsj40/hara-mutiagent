@@ -1,0 +1,64 @@
+{
+  "meta": {
+    "function_id": "F001",
+    "function_name": "静态开关拉起功能",
+    "target_file": "output/EPB_HARA_stage1_F001_derive_mf.json",
+    "reviewed_at": "2026-05-25T00:00:00+08:00"
+  },
+  "overall_result": "pass",
+  "issues": [],
+  "field_reviews": [
+    {
+      "field": "功能丧失",
+      "result": "pass",
+      "notes": "功能完全不工作是有效失效行为，溜车风险明确，安全相关判断正确"
+    },
+    {
+      "field": "过大",
+      "result": "pass",
+      "notes": "输出存在强度上限，适用性判断正确；非安全风险边界明确（部件过载，非人身伤害），是否适用=是、是否有安全风险=否符合要求"
+    },
+    {
+      "field": "过早",
+      "result": "pass",
+      "notes": "驾驶员主动即时触发，不存在'早于请求'问题，nan判断正确"
+    },
+    {
+      "field": "过小",
+      "result": "pass",
+      "notes": "制动类功能输出过小适用且安全相关，驻车能力不足导致溜车风险推导正确"
+    },
+    {
+      "field": "过晚",
+      "result": "pass",
+      "notes": "响应延迟导致意图无法及时实现，延迟期间溜车风险推导合理"
+    },
+    {
+      "field": "非预期激活",
+      "result": "pass",
+      "notes": "系统故障导致意外激活适用，行驶中意外驻车导致失控/追尾风险推导正确"
+    },
+    {
+      "field": "卡滞",
+      "result": "pass",
+      "notes": "卡滞描述与目标状态（拉起）一致，'无法切换到拉起状态'表述正确，未写成反向退出问题"
+    },
+    {
+      "field": "方向错误",
+      "result": "pass",
+      "notes": "EPB执行器存在夹紧/释放互斥输出，请求拉起却执行释放适用方向错误，判断正确"
+    }
+  ],
+  "checks": {
+    "nan_fields_justified": true,
+    "overload_boundary_clear": true,
+    "undersize_not_missed": true,
+    "stuck_target_consistent": true,
+    "direction_error_not_missed": true,
+    "no_boundary_mixing": true,
+    "no_root_cause_mixing": true,
+    "no_hazard_preplacement": true
+  },
+  "fixes": [],
+  "notes": "所有字段语义判断正确，推理过程清晰，故障描述具体且停在功能级异常。无修正需求。"
+}

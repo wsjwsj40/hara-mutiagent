@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "run_id": "EPB_HARA",
+    "stage": "stage2_review",
+    "target_file": "output/EPB_HARA_stage2_mf_vehicle_hazards.json",
+    "generated_at": "2026-05-25T20:39:35+08:00",
+    "source_review_files": [
+      "output\\EPB_HARA_stage2_F001_review.json"
+    ],
+    "reviewed_function_ids": [
+      "F001"
+    ],
+    "function_count": 1
+  },
+  "overall_result": "pass",
+  "issues": [],
+  "fixes": [],
+  "review_log": []
+}

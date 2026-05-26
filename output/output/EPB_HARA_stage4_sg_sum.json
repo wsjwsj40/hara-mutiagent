@@ -1,0 +1,328 @@
+{
+  "meta": {
+    "run_id": "EPB_HARA",
+    "stage": "stage4",
+    "source": "output",
+    "generation": "deterministic_group_by_mf_and_safety_goal_highest_asil_min_ftti_except_operation_mode",
+    "operation_mode_policy": "only 操作模式 is model-filled; rows are grouped within each MF by safety goal with highest ASIL and minimum FTTI",
+    "operation_modes_to_fill": 6,
+    "warnings_count": 25
+  },
+  "sg_sum": [
+    {
+      "SG_No": "SG001",
+      "MF_ID": "MF001",
+      "安全目标": "防止因EPB静态开关拉起功能丧失导致的车辆非预期纵向移动",
+      "ASIL Level": "B",
+      "安全状态": "EPB系统在检测到静态开关拉起功能丧失时，应通过备用制动机制建立并保持驻车制动力，确保车辆在驻车状态下不发生非预期纵向移动",
+      "操作模式": "驻车保持模式",
+      "FTTI(ms)": "300",
+      "Comments": "自动基于 MF_ID=MF001 中相同安全目标汇总；ASIL Level 取最高=B；FTTI(ms) 取最小=300；代表场景 List_No=1；操作模式参考：车辆状态=驻车，道路类型=城市支路，道路条件=下坡道路，驾驶员是否在车上=否，危害事件=行人在城市支路下坡道路上因车辆EPB功能丧失向前溜动受到碰撞受伤风险。"
+    },
+    {
+      "SG_No": "SG002",
+      "MF_ID": "MF002",
+      "安全目标": "防止因EPB静态开关拉起制动力不足导致的车辆非预期纵向移动",
+      "ASIL Level": "B",
+      "安全状态": "EPB系统在检测到静态开关拉起制动力低于设计下限时，应通过增加制动力输出或激活备用驻车制动机制建立并保持足够的驻车制动力，确保车辆在驻车状态下不发生非预期纵向移动",
+      "操作模式": "坡道驻车制动模式",
+      "FTTI(ms)": "150",
+      "Comments": "自动基于 MF_ID=MF002 中相同安全目标汇总；ASIL Level 取最高=B；FTTI(ms) 取最小=150；代表场景 List_No=17；操作模式参考：车辆状态=驻车，道路类型=城市支路，道路条件=下坡道路，驾驶员是否在车上=否，危害事件=行人在下坡道路人行道上正常行走时，因车辆驻车制动力不足沿坡道溜车，车辆加速后冲上人行道或撞向路边行人，行人受到碰撞/挤压伤害风险。"
+    },
+    {
+      "SG_No": "SG003",
+      "MF_ID": "MF003",
+      "安全目标": "防止因EPB静态开关拉起功能响应过晚导致的车辆非预期纵向移动",
+      "ASIL Level": "B",
+      "安全状态": "EPB系统在检测到静态开关拉起响应延迟超过安全阈值时，应在FTTI内建立驻车制动力，或通过备用制动机制确保车辆在驻车状态下不发生非预期纵向移动",
+      "操作模式": "坡道驻车响应模式",
+      "FTTI(ms)": "100",
+      "Comments": "自动基于 MF_ID=MF003 中相同安全目标汇总；ASIL Level 取最高=B；FTTI(ms) 取最小=100；代表场景 List_No=43；操作模式参考：车辆状态=停车未熄火，道路类型=盘山路，道路条件=下坡道路，驾驶员是否在车上=否，危害事件=车辆在盘山道路下坡路段因EPB响应延迟向前溜车，滑入下方车道与对向来车碰撞，造成两车损坏和乘员受伤。"
+    },
+    {
+      "SG_No": "SG004",
+      "MF_ID": "MF004",
+      "安全目标": "防止EPB静态开关拉起功能非预期激活导致的车辆非预期减速",
+      "ASIL Level": "D",
+      "安全状态": "EPB系统检测到无有效开关操作信号时的拉起请求时，禁止执行拉起动作，维持当前制动状态；若已非预期激活，应在最短时间内释放后轮制动力并通知驾驶员",
+      "操作模式": "高速行驶制动控制模式",
+      "FTTI(ms)": "50",
+      "Comments": "自动基于 MF_ID=MF004 中相同安全目标汇总；ASIL Level 取最高=D；FTTI(ms) 取最小=50；代表场景 List_No=50；操作模式参考：车辆状态=前向匀速，道路类型=高速公路，道路条件=直道，驾驶员是否在车上=是，危害事件=本车乘员和后车乘员因车辆高速行驶中EPB突然激活导致车轮锁死，后车追尾碰撞受到伤害风险。"
+    },
+    {
+      "SG_No": "SG005",
+      "MF_ID": "MF005",
+      "安全目标": "防止EPB静态开关拉起功能卡滞导致的非预期纵向移动",
+      "ASIL Level": "B",
+      "安全状态": "EPB系统检测到静态开关拉起功能卡滞时，应在FTTI内通过备用制动通道（如自动施加液压制动或启用应急驻车制动）建立驻车制动力，防止车辆非预期移动；同时通过仪表向驾驶员发出驻车失败告警提示",
+      "操作模式": "坡道泊车驻车模式",
+      "FTTI(ms)": "150",
+      "Comments": "自动基于 MF_ID=MF005 中相同安全目标汇总；ASIL Level 取最高=B；FTTI(ms) 取最小=150；代表场景 List_No=67；操作模式参考：车辆状态=泊车，道路类型=城市支路，道路条件=下坡道路，驾驶员是否在车上=否，危害事件=车辆在坡道上因EPB卡滞无法驻车而向前溜车，前方密集行人受到碰撞伤害风险。"
+    },
+    {
+      "SG_No": "SG006",
+      "MF_ID": "MF006",
+      "安全目标": "防止EPB静态开关拉起功能方向错误（请求拉起时执行释放）导致的非预期纵向移动。",
+      "ASIL Level": "C",
+      "安全状态": "EPB在收到拉起请求时正确执行拉起（施加制动力），确保车辆保持静止；或在检测到方向错误故障时，立即施加制动力并保持车辆静止，防止溜车。",
+      "操作模式": "坡道停车驻车模式",
+      "FTTI(ms)": "100",
+      "Comments": "自动基于 MF_ID=MF006 中相同安全目标汇总；ASIL Level 取最高=C；FTTI(ms) 取最小=100；代表场景 List_No=81；操作模式参考：车辆状态=停车未熄火，道路类型=城市支路，道路条件=下坡道路，驾驶员是否在车上=否，危害事件=坡道下方行人因车辆下坡溜车受到碰撞伤害风险。"
+    }
+  ],
+  "review_log": [],
+  "Validation_Warnings": [
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "SG_Sum",
+      "message": "未找到 SG_Sum 数据，已生成空 sheet。"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 91,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C3",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 92,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C3",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 93,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C3",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 94,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C2",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 95,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C3",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 96,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C3",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 97,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C1",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 98,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C2",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 99,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C3",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 100,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C1",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 101,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C2",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 102,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C3",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 103,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C3",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 104,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C3",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 105,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C3",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 106,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C3",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 107,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C1",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "basic",
+      "sheet": "HARA",
+      "row": 108,
+      "message": "无法从 Severity 'S' / 暴露频率'E' / 控制能力 'C' 解析并计算 ASIL，已保留原结果ASIL。",
+      "severity": "nan",
+      "exposure": "nan",
+      "controllability": "C3",
+      "original_asil": "nan"
+    },
+    {
+      "level": "WARNING",
+      "stage": "sg_sum_auto_fix",
+      "sheet": "SG_Sum",
+      "MF_ID": "MF001",
+      "安全目标": "防止因EPB静态开关拉起功能丧失导致的车辆非预期纵向移动",
+      "message": "非 QM HARA 的 MF_ID + 安全目标缺少 SG_Sum 条目，已自动补齐。"
+    },
+    {
+      "level": "WARNING",
+      "stage": "sg_sum_auto_fix",
+      "sheet": "SG_Sum",
+      "MF_ID": "MF002",
+      "安全目标": "防止因EPB静态开关拉起制动力不足导致的车辆非预期纵向移动",
+      "message": "非 QM HARA 的 MF_ID + 安全目标缺少 SG_Sum 条目，已自动补齐。"
+    },
+    {
+      "level": "WARNING",
+      "stage": "sg_sum_auto_fix",
+      "sheet": "SG_Sum",
+      "MF_ID": "MF003",
+      "安全目标": "防止因EPB静态开关拉起功能响应过晚导致的车辆非预期纵向移动",
+      "message": "非 QM HARA 的 MF_ID + 安全目标缺少 SG_Sum 条目，已自动补齐。"
+    },
+    {
+      "level": "WARNING",
+      "stage": "sg_sum_auto_fix",
+      "sheet": "SG_Sum",
+      "MF_ID": "MF004",
+      "安全目标": "防止EPB静态开关拉起功能非预期激活导致的车辆非预期减速",
+      "message": "非 QM HARA 的 MF_ID + 安全目标缺少 SG_Sum 条目，已自动补齐。"
+    },
+    {
+      "level": "WARNING",
+      "stage": "sg_sum_auto_fix",
+      "sheet": "SG_Sum",
+      "MF_ID": "MF005",
+      "安全目标": "防止EPB静态开关拉起功能卡滞导致的非预期纵向移动",
+      "message": "非 QM HARA 的 MF_ID + 安全目标缺少 SG_Sum 条目，已自动补齐。"
+    },
+    {
+      "level": "WARNING",
+      "stage": "sg_sum_auto_fix",
+      "sheet": "SG_Sum",
+      "MF_ID": "MF006",
+      "安全目标": "防止EPB静态开关拉起功能方向错误（请求拉起时执行释放）导致的非预期纵向移动。",
+      "message": "非 QM HARA 的 MF_ID + 安全目标缺少 SG_Sum 条目，已自动补齐。"
+    }
+  ]
+}

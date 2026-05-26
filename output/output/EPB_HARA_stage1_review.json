@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "run_id": "EPB_HARA",
+    "stage": "stage1_review",
+    "target_file": "output/EPB_HARA_stage1_derive_mf.json",
+    "generated_at": "2026-05-25T20:22:27+08:00",
+    "source_review_files": [
+      "output\\EPB_HARA_stage1_F001_review.json"
+    ],
+    "reviewed_function_ids": [
+      "F001"
+    ],
+    "function_count": 1
+  },
+  "overall_result": "pass",
+  "issues": [],
+  "fixes": [],
+  "review_log": []
+}
